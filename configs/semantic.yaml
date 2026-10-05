@@ -1,0 +1,17 @@
+# Semantic-only ablation: VES(t) = SemanticEvidence(t), i.e. CLIP similarity
+# between the image and the candidate phrase.
+#
+# Note: for --method semantic the runner forces alpha = gamma = 0 regardless of
+# what is written here.
+
+defaults: visualguard
+
+alpha: 0.0
+beta: 1.0
+gamma: 0.0
+lam: 0.5
+threshold: 0.35
+
+clip_model_name: openai/clip-vit-base-patch32
+normalize: minmax
+penalise_function_words: false

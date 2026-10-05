@@ -1,0 +1,17 @@
+# Attention + semantic (no region grounding).
+#
+# Serves as both the "no detector required" configuration for full VisualGuard
+# and the ablation row E in the ablation grid.
+
+defaults: visualguard
+
+alpha: 1.0
+beta: 1.0
+gamma: 0.0
+lam: 0.5
+threshold: 0.35
+
+attention_candidate_mix: 0.5
+clip_model_name: openai/clip-vit-base-patch32
+normalize: minmax
+penalise_function_words: false

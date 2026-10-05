@@ -1,0 +1,26 @@
+# Core
+torch>=2.1.0
+torchvision>=0.15.0
+transformers>=4.40.0
+accelerate>=0.27.0
+numpy>=1.24.0
+Pillow>=10.0.0
+PyYAML>=6.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0,<5.0.0
+
+# Data loading (COCO annotations; MME and POPE are read as plain JSONL)
+pycocotools>=2.0.7
+
+# Optional: 4-bit / 8-bit quantisation (requires a CUDA device)
+# bitsandbytes>=0.43.0
+
+# Optional: upstream Grounding DINO package.
+# The default region-evidence backend is `hf_grounding_dino`, which needs only
+# transformers>=4.40 and no extra install. Enable with
+# `--grounding-backend hf_grounding_dino`.
+# groundingdino @ git+https://github.com/IDEA-Research/GroundingDINO.git
+
+# Development
+pytest>=7.4.0
+tqdm>=4.66.0

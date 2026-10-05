@@ -1,0 +1,34 @@
+# Full VisualGuard: attention + semantic (+ region when gamma > 0 and a
+# grounding backend is enabled).
+#
+# Weights are interpreted after per-channel normalisation into [0, 1], so
+# alpha/beta/gamma are directly comparable. The combined score is divided by
+# the sum of active weights, so VES stays in [0, 1] as channels are switched off.
+
+alpha: 1.0
+beta: 1.0
+gamma: 0.0            # region evidence off unless a grounding backend is enabled
+lam: 0.5              # hallucination penalty strength
+threshold: 0.35       # VES below this counts as insufficient visual support
+
+# Attention aggregation. layer_fraction selects the top fraction of layers,
+# where cross-modal grounding is empirically strongest.
+layer_fraction: 0.5
+head_aggregation: mean
+layer_aggregation: mean
+
+# Weight on the candidate-level component (token-embedding vs image-token
+# similarity) versus the state-level component (attention mass on the image
+# span). Attention alone cannot rank candidates at a step; see README.
+attention_candidate_mix: 0.5
+
+normalize: minmax
+clip_model_name: openai/clip-vit-base-patch32
+penalise_function_words: false
+
+# Decoding
+max_new_tokens: 64
+top_k: 50
+num_beams: 4
+temperature: 1.0
+top_p: 1.0

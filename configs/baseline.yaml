@@ -1,0 +1,28 @@
+# Unmodified LVLM decoding. All evidence weights are zero, so no logit is
+# ever modified. Used for the greedy / sampling / beam baselines via
+# --method greedy|sampling|beam.
+#
+# The weights below are inert placeholders kept at zero deliberately so this
+# file documents exactly which channels are active for a baseline: none.
+
+alpha: 0.0
+beta: 0.0
+gamma: 0.0
+lam: 0.0
+threshold: 1.0
+
+layer_fraction: 0.5
+head_aggregation: mean
+layer_aggregation: mean
+attention_candidate_mix: 0.5
+
+normalize: minmax
+clip_model_name: openai/clip-vit-base-patch32
+penalise_function_words: false
+
+# Decoding
+max_new_tokens: 64
+top_k: 50
+num_beams: 4
+temperature: 1.0
+top_p: 1.0

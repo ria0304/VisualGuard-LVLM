@@ -1,0 +1,18 @@
+# Region-only ablation: VES(t) = RegionEvidence(t).
+#
+# REQUIRES a grounding backend. Run with:
+#   python -m src.run --benchmark pope --method region \
+#       --grounding-backend hf_grounding_dino
+# With --grounding-backend none the region channel contributes 0.0 and the run
+# records a note saying region evidence was disabled. That is NOT the same as a
+# region-only method and must not be reported as one.
+
+defaults: visualguard
+
+alpha: 0.0
+beta: 0.0
+gamma: 1.0
+lam: 0.5
+threshold: 0.35
+
+penalise_function_words: false

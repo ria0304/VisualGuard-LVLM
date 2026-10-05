@@ -1,0 +1,21 @@
+# Attention-only ablation: VES(t) = AttentionEvidence(t).
+# beta and gamma are forced to zero by the runner so this file documents the
+# intent; editing them here has no effect for --method attention.
+
+defaults: visualguard
+
+alpha: 1.0
+beta: 0.0
+gamma: 0.0
+lam: 0.5
+threshold: 0.35
+
+# Pure state-level attention: set the mix to 0.0 to penalise purely on how
+# much attention mass the decoding state places on the image span.
+attention_candidate_mix: 0.0
+
+layer_fraction: 0.5
+head_aggregation: mean
+layer_aggregation: mean
+normalize: minmax
+penalise_function_words: false
