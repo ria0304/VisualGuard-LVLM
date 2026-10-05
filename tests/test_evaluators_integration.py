@@ -400,3 +400,96 @@ def test_decoder_generate_honours_per_call_token_override():
     out2 = dec.generate("img.jpg", "q", method="attention")
     assert out2.num_generated_tokens == 64, out2.num_generated_tokens
     assert dec.decoding_config.max_new_tokens == 64
+
+
+# ---------------------------------------------------------------------------
+# regression: the token-budget probe must not swallow runtime errors
+# ---------------------------------------------------------------------------
+
+
+def test_budget_probe_does_not_swallow_runtime_type_errors():
+    """A TypeError from inside the decoder must propagate, not be retried.
+
+    The evaluator used to call ``generate_fn(..., max_new_tokens=...)`` inside a
+    ``try/except TypeError`` to detect an unsupported signature. ``TypeError`` is
+    also what the decoder raises for ordinary faults (a bad image type, a CLIP
+    dtype mismatch), so those were silently swallowed and the sample was decoded a
+    second time at the decoder's own default budget -- 64 tokens where POPE
+    specifies 16 -- with the original error thrown away.
+    """
+    from src.data.pope import POEPSample
+
+    attempts = []
+
+    def gen(image, question, max_new_tokens=None):
+        attempts.append(max_new_tokens)
+        raise TypeError("Unsupported image input type: <class 'Tensor'>")
+
+    ev = POPEEvaluator(generate_fn=gen, method="visualguard", max_new_tokens=16)
+    sample = POEPSample(
+        question_id="1", image_id="1", image_path=Path("x.jpg"),
+        question="Is there a dog?", label="yes", setting="random",
+    )
+    with pytest.raises(TypeError, match="Unsupported image input"):
+        ev._predict(sample)
+    assert attempts == [16], f"the sample was decoded {len(attempts)} times"
+
+
+def test_two_argument_generate_fn_still_works_and_is_reported():
+    """A decoder that cannot take the override is used as-is, and says so."""
+    from src.data.pope import POEPSample
+
+    def gen(image, question):
+        return GenerationResult(text="Yes", num_generated_tokens=4)
+
+    ev = POPEEvaluator(generate_fn=gen, method="visualguard", max_new_tokens=16)
+    sample = POEPSample(
+        question_id="1", image_id="1", image_path=Path("x.jpg"),
+        question="Is there a dog?", label="yes", setting="random",
+    )
+    record = ev._predict(sample)
+    assert record.prediction is True
+    notes = ev._diagnostics([record])
+    assert any("max_new_tokens" in n for n in notes), (
+        f"the degraded token budget was not reported: {notes}"
+    )
+
+
+def test_unparseable_only_run_is_flagged_not_silently_zeroed():
+    from src.data.pope import POEPSample
+
+    ev = POPEEvaluator(
+        generate_fn=lambda i, q: GenerationResult(text="???"), method="visualguard"
+    )
+    samples = [
+        POEPSample(
+            question_id=str(n), image_id=str(n), image_path=Path("x.jpg"),
+            question="Is there a dog?", label="no", setting="random",
+        )
+        for n in range(4)
+    ]
+    records = [ev._predict(s) for s in samples]
+    notes = ev._diagnostics(records)
+    assert any("could not be parsed" in n for n in notes)
+    assert any("nothing was parseable" in n for n in notes), (
+        f"an all-unparseable run was not called out: {notes}"
+    )
+
+
+def test_mme_images_are_grouped_by_path_not_basename():
+    """Same-named images in different directories must not collapse."""
+    from src.evaluation.mme_eval import _image_key
+
+    a = _image_key("images/001.jpg", "existence", "q0")
+    b = _image_key("other/001.jpg", "existence", "q1")
+    assert a != b, "distinct images sharing a filename were grouped together"
+
+    # The same file referenced two ways is still one group.
+    assert _image_key("./images/001.jpg", "existence", "q0") == a
+    assert _image_key("images/001.jpg", "existence", "q1") == a
+
+    # Different subtasks never collide.
+    assert _image_key("images/001.jpg", "count", "q0") != a
+
+    # No usable path falls back to the question id rather than colliding.
+    assert _image_key("", "existence", "q9") != _image_key("", "existence", "q8")

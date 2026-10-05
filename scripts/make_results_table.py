@@ -117,9 +117,10 @@ def row_label(payload: Dict[str, Any]) -> str:
     evidence = _evidence_block(payload)
     weights = (_num(evidence.get("alpha")), _num(evidence.get("beta")),
                _num(evidence.get("gamma")))
-    if CANONICAL_WEIGHTS.get(str(method)) == weights:
+    is_full_method = str(method) == "visualguard" and weights == FULL_WEIGHTS
+    if CANONICAL_WEIGHTS.get(str(method)) == weights or is_full_method:
         return base
-    if str(method) == "visualguard" and weights != FULL_WEIGHTS:
+    if str(method) == "visualguard":
         # Labeling a non-full visualguard configuration "G. full VisualGuard"
         # would be self-contradictory, and rows F and the lambda sweep both land
         # here. They are variants, so say that.

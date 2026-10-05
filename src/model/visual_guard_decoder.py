@@ -398,15 +398,31 @@ class VisualGuardDecoder:
         self._bind_embeddings()
 
     def _validate_evidence_reachable(self) -> None:
-        """Reject configurations whose active channels cannot be measured.
+        """Reject configurations whose active channels cannot rank candidates.
 
-        Without this, ``--method region`` with the default ``backend="none"``
-        produced a run indistinguishable from unmodified greedy: every candidate
-        scored the same VES, so the penalty never re-ordered anything and the
-        run reported a region-evidence ablation that had measured no regions.
-        Failing here is the honest outcome.
+        VisualGuard works by re-ordering candidates within a step. A channel that
+        assigns every candidate the same value therefore cannot affect the
+        outcome, whatever its weight. Two such configurations are refused here
+        rather than silently reported as an ablation that measured nothing:
+
+        * ``gamma > 0`` with no grounding backend -- region evidence is constant.
+        * ``alpha > 0`` with ``attention_candidate_mix == 0`` -- image attention
+          is a property of the decoding *state*, so it is identical for every
+          candidate at a step. With no candidate-level term the attention channel
+          is a constant by construction.
         """
         cfg = self.evidence_config
+        if cfg.alpha > 0 and cfg.attention_candidate_mix <= 0.0:
+            raise ValueError(
+                f"method {self.method!r} has alpha={cfg.alpha} but "
+                "attention_candidate_mix=0, which leaves AttentionEvidence a "
+                "per-step constant: image attention describes the decoding "
+                "state, not the candidate, so every candidate would score "
+                "identically and the channel could not re-order anything. Set "
+                "attention_candidate_mix > 0 (0.5 is the default) for the "
+                "candidate-level term, or --alpha 0 for a run that genuinely "
+                "does not use attention evidence."
+            )
         if self.grounding_config.backend == "none":
             active = [n for n, w in (("alpha", cfg.alpha), ("beta", cfg.beta),
                                      ("gamma", cfg.gamma)) if w > 0]

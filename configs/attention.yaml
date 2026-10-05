@@ -12,7 +12,14 @@ threshold: 0.35
 
 # Pure state-level attention: set the mix to 0.0 to penalise purely on how
 # much attention mass the decoding state places on the image span.
-attention_candidate_mix: 0.0
+#
+# NOT USED, and deliberately left at the default 0.5 instead. At mix = 0 the
+# channel is a property of the decoding *state*, so every candidate at a step
+# scores identically and the channel cannot re-order anything -- the run would
+# be unmodified greedy while labelled "attention only". The runner rejects
+# alpha > 0 with mix = 0 for exactly this reason. Kept here as documentation of
+# what the knob does, not as a recommendation.
+attention_candidate_mix: 0.5
 
 layer_fraction: 0.5
 head_aggregation: mean

@@ -688,3 +688,299 @@ def test_gamma_with_a_grounding_backend_is_accepted():
     dec.backend = _StubBackend()
     dec.evidence_config = EvidenceConfig(alpha=0.0, beta=0.0, gamma=1.0)
     dec._validate_evidence_reachable()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# grounding: caching, eviction and label attribution
+# ---------------------------------------------------------------------------
+
+
+def _grounding_stub(cache=True, cache_size=2):
+    from collections import OrderedDict
+
+    from src.model.grounding import Detection, GroundingDINOBackend
+
+    backend = object.__new__(GroundingDINOBackend)
+    backend.config = GroundingConfig(
+        backend="hf_grounding_dino", cache=cache, cache_size=cache_size
+    )
+    backend._cache = OrderedDict()
+    backend._anchors = {}
+    backend.model = object()
+    backend.processor = None
+    backend.calls = []
+    backend._detect_uncached = lambda image, phrases: (
+        backend.calls.append(list(phrases))
+        or [Detection(label=p, score=0.9, box=(0.0, 0.0, 1.0, 1.0)) for p in phrases]
+    )
+    return backend
+
+
+def test_detection_cache_anchors_do_not_grow_unbounded():
+    """Anchoring images must be bounded by the cache, not by the run length.
+
+    The anchors used to live in a module-global map that was never pruned, so a
+    long run retained every image it had ever grounded -- multiple GB over a full
+    POPE pass -- while the detection cache itself stayed small.
+    """
+    backend = _grounding_stub(cache_size=2)
+
+    class _Img:
+        pass
+
+    images = [_Img() for _ in range(10)]
+    for image in images:
+        backend.detect(image, ["dog"])
+
+    assert len(backend._cache) <= 2
+    assert len(backend._anchors) <= 2, (
+        f"{len(backend._anchors)} image anchors retained for a 2-entry cache"
+    )
+    # Every retained anchor still backs a live cache entry.
+    live_ids = {k[0][1] for k in backend._cache if k[0][0] == "id"}
+    assert {id(v) for v in backend._anchors.values()} == live_ids
+
+
+def test_detection_cache_reset_drops_anchors():
+    backend = _grounding_stub(cache_size=4)
+
+    class _Img:
+        pass
+
+    backend.detect(_Img(), ["dog"])
+    assert backend._anchors
+    backend.reset()
+    assert backend._cache == {}
+    assert backend._anchors == {}
+
+
+def test_detection_cache_evicts_least_recently_used():
+    backend = _grounding_stub(cache_size=2)
+
+    class _Img:
+        pass
+
+    hot = _Img()
+    backend.detect(hot, ["p"])
+    for i in range(4):
+        backend.detect(_Img(), [f"q{i}"])
+    backend.detect(hot, ["p"])     # refresh
+    backend.detect(_Img(), ["new"])
+
+    assert any(k[0] == ("id", id(hot)) for k in backend._cache), (
+        "the recently used entry was evicted; eviction is not LRU"
+    )
+
+
+def test_detection_cache_returns_a_copy():
+    """A consumer mutating the result must not poison the cache."""
+    backend = _grounding_stub()
+    first = backend.detect("img.jpg", ["dog"])
+    first.append("mutated")
+    second = backend.detect("img.jpg", ["dog"])
+    assert "mutated" not in second
+
+
+def test_token_matching_is_not_substring_matching():
+    """``cat`` must not match ``cattle``; that would invent region evidence."""
+    from src.model.grounding import match_detection
+
+    cattle = [Detection(label="cattle", score=0.9, box=(0.0, 0.0, 1.0, 1.0))]
+    assert match_detection(cattle, "cat")[0] == pytest.approx(0.0)
+
+    business = [Detection(label="business", score=0.9, box=(0.0, 0.0, 1.0, 1.0))]
+    assert match_detection(business, "bus")[0] == pytest.approx(0.0)
+
+    # Containment on a token boundary still works: detectors return captions.
+    caption = [Detection(label="brown dog on grass", score=0.6, box=(0.0, 0.0, 1.0, 1.0))]
+    assert match_detection(caption, "dog")[0] == pytest.approx(0.6)
+
+
+def test_is_token_subsequence():
+    from src.model.grounding import is_token_subsequence
+
+    assert is_token_subsequence(["dog"], ["brown", "dog", "grass"])
+    assert is_token_subsequence(["brown", "dog"], ["brown", "dog", "grass"])
+    assert not is_token_subsequence(["dog", "grass"], ["brown", "dog"])  # not contiguous
+    assert not is_token_subsequence([], ["dog"])
+    assert not is_token_subsequence(["dog"], [])
+    assert not is_token_subsequence(["a", "b", "c"], ["a", "b"])          # too long
+
+
+# ---------------------------------------------------------------------------
+# config routing
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_dtype_applies_to_the_model_not_the_detector(tmp_path):
+    """``dtype: float16`` in a YAML means the LVLM, which is what users mean.
+
+    Only GroundingConfig was in the ``build_configs`` spec set, so the key bound
+    there: the detector became fp16 while the model silently stayed on its
+    default.
+    """
+    import yaml
+
+    from src.run import build_experiment_configs, build_parser
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "alpha": 1.0, "beta": 1.0, "gamma": 0.0, "dtype": "float16",
+    }))
+    args = build_parser().parse_args(["--config", str(cfg), "--method", "visualguard"])
+    configs = build_experiment_configs(args)
+
+    assert configs["lvlm"].dtype == "float16"
+    assert configs["grounding"].dtype == "float32"
+
+
+def test_grounding_dtype_prefix_targets_the_detector(tmp_path):
+    import yaml
+
+    from src.run import build_experiment_configs, build_parser
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "alpha": 1.0, "beta": 1.0, "gamma": 0.0, "grounding_dtype": "float16",
+    }))
+    args = build_parser().parse_args(["--config", str(cfg), "--method", "visualguard"])
+    configs = build_experiment_configs(args)
+
+    assert configs["grounding"].dtype == "float16"
+    assert configs["lvlm"].dtype == "auto"
+
+
+def test_ambiguous_config_keys_are_rejected():
+    """A key two dataclasses claim must raise rather than bind arbitrarily."""
+    from dataclasses import dataclass
+
+    from src.utils.config import ConfigError, build_configs
+
+    @dataclass
+    class A:
+        shared: float = 1.0
+
+    @dataclass
+    class B:
+        shared: float = 2.0
+
+    with pytest.raises(ConfigError, match="Ambiguous"):
+        build_configs({"a": A, "b": B}, {"shared": 3.0})
+
+
+def test_benchmark_budget_is_recorded_in_the_resolved_config():
+    """Provenance must state the budget that ran, not the one overridden."""
+    from src.run import benchmark_budget, build_parser
+
+    pope = build_parser().parse_args(["--benchmark", "pope"])
+    assert benchmark_budget(pope, "pope") == 16
+    mme = build_parser().parse_args(["--benchmark", "mme"])
+    assert benchmark_budget(mme, "mme") == 32
+    override = build_parser().parse_args(["--max-new-tokens", "4"])
+    assert benchmark_budget(override, "pope") == 4
+
+
+def test_accepts_keyword_probes_the_signature():
+    from src.utils.config import accepts_keyword
+
+    def with_kw(a, b, max_new_tokens=None):
+        return None
+
+    def without(a, b):
+        return None
+
+    def kw_only(a, *, max_new_tokens=None):
+        return None
+
+    def star(a, **kwargs):
+        return None
+
+    assert accepts_keyword(with_kw, "max_new_tokens")
+    assert accepts_keyword(kw_only, "max_new_tokens")
+    assert accepts_keyword(star, "max_new_tokens")
+    assert not accepts_keyword(without, "max_new_tokens")
+    assert not accepts_keyword(with_kw, "nonexistent")
+
+
+def test_state_only_attention_channel_is_rejected():
+    """``attention_candidate_mix = 0`` leaves the attention channel constant.
+
+    Image attention describes the decoding state, not the candidate, so every
+    candidate at a step scores identically and the channel cannot re-order
+    anything. The run would be unmodified greedy while labelled "attention only".
+    """
+    import torch
+
+    from src.model.visual_guard_decoder import VisualGuardDecoder
+
+    class _Stub:
+        device = torch.device("cpu")
+        model = None
+        tokenizer = None
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1),
+        evidence_config=EvidenceConfig(
+            alpha=1.0, beta=0.0, gamma=0.0, attention_candidate_mix=0.0
+        ),
+        grounding_config=GroundingConfig(backend="none"),
+        method="attention",
+    )
+    dec.backend = _Stub()
+    with pytest.raises(ValueError, match="attention_candidate_mix"):
+        dec.load_evidence()
+
+
+def test_shipped_attention_config_can_rank_candidates():
+    """The shipped configs must not contain a constant-only channel."""
+    from src.run import build_experiment_configs, build_parser
+
+    for name in ("attention", "semantic", "unidirectional", "visualguard"):
+        configs = build_experiment_configs(
+            build_parser().parse_args(["--config", name, "--method", "visualguard"])
+        )
+        evidence = configs["evidence"]
+        assert not (
+            evidence.alpha > 0 and evidence.attention_candidate_mix <= 0.0
+        ), f"configs/{name}.yaml has a state-only attention channel"
+
+
+def test_unreachable_channels_are_rejected_before_the_model_loads():
+    """The runner must refuse these *before* fetching a multi-GB checkpoint.
+
+    The decoder raises the same error, but only from ``load_evidence()``, which
+    runs after ``decoder.load()`` -- by then the download has already happened.
+    """
+    from src.run import build_experiment_configs, build_parser
+    from src.utils.config import ConfigError
+
+    base = ["--benchmark", "pope", "--data-root", "/tmp"]
+
+    # Region evidence weighted but no detector.
+    with pytest.raises(ConfigError, match="grounding-backend"):
+        build_experiment_configs(
+            build_parser().parse_args(base + ["--method", "region"])
+        )
+
+    # A baseline run is exempt: having no active channels is the point.
+    configs = build_experiment_configs(build_parser().parse_args(base))
+    assert configs["evidence"].alpha == 0.0
+    assert configs["evidence"].gamma == 0.0
+
+
+def test_state_only_attention_config_is_rejected_at_config_time(tmp_path):
+    import yaml
+
+    from src.run import build_experiment_configs, build_parser
+    from src.utils.config import ConfigError
+
+    cfg = tmp_path / "state_only.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "alpha": 1.0, "beta": 1.0, "gamma": 0.0, "attention_candidate_mix": 0.0,
+    }))
+    args = build_parser().parse_args(
+        ["--benchmark", "pope", "--method", "visualguard", "--config", str(cfg)]
+    )
+    with pytest.raises(ConfigError, match="attention_candidate_mix"):
+        build_experiment_configs(args)

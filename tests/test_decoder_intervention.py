@@ -63,17 +63,31 @@ class _StubBackend:
     def encode_prompt(self, question):
         return {"input_ids": torch.tensor([[1, 2, 3]])}
 
+    def prepare_inputs(self, question, image=None):
+        return {
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "pixel_values": torch.zeros(1, 3, 4, 4),
+        }
+
     def preprocess_image(self, image):
         return torch.zeros(1, 3, 4, 4)
 
-    def initial_step(self, input_ids, pixel_values, output_attentions=False):
+    def initial_step(self, input_ids, pixel_values, output_attentions=False,
+                     attention_mask=None):
         return _StubStep(self._logits)
 
-    def next_step(self, input_ids, past_key_values, output_attentions=False):
+    def next_step(self, input_ids, past_key_values, output_attentions=False,
+                  attention_mask=None):
         return _StubStep(self._logits)
 
     def image_token_span(self, input_ids, pixel_values):
         return None
+
+    def token_embedding_matrix(self):
+        return torch.ones(8, 2)
+
+    def image_token_embeddings(self, pixel_values):
+        return torch.ones(4, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -530,3 +544,168 @@ def test_decode_loop_passes_image_span_on_every_step():
         f"the loop dropped the image-token span on a cached step: {passed_spans}"
     )
     assert passed_spans[0] == (0, n_img)
+
+
+# ---------------------------------------------------------------------------
+# regression: decoder lifecycle, budget and method handling
+# ---------------------------------------------------------------------------
+
+
+def test_set_method_is_idempotent_across_switches():
+    """Switching methods must not permanently destroy the base weights.
+
+    ``set_method`` used to assign the ablated config back to the decoder, so
+    ``attention`` then ``visualguard`` left the decoder attention-only: the run
+    claimed the full method and measured a single channel.
+    """
+    base = EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.0, lam=0.5, threshold=0.35)
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1, top_k=3),
+        evidence_config=base,
+        method="visualguard",
+    )
+    dec.backend = _StubBackend(logits)
+
+    dec.set_method("attention")
+    assert (dec.evidence_config.alpha, dec.evidence_config.beta) == (1.0, 0.0)
+
+    dec.set_method("visualguard")
+    assert dec.evidence_config.beta == base.beta, "beta was permanently lost"
+    assert dec.evidence_config.alpha == base.alpha
+
+    # ...and the base itself is untouched.
+    assert base.beta == 1.0
+
+
+def test_set_method_round_trips_through_every_method():
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    base = EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.0, lam=0.5)
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1),
+        evidence_config=base,
+        method="visualguard",
+    )
+    dec.backend = _StubBackend(logits)
+    for method in ("attention", "semantic", "unidirectional", "visualguard"):
+        dec.set_method(method)
+        assert dec.method == method
+    assert dec.evidence_config.beta == base.beta
+
+
+def test_generate_applies_the_requested_methods_ablation():
+    """``generate(method=...)`` must actually run that method's channels.
+
+    The ablation was only applied by ``set_method`` and ``run.py``, so asking for
+    "attention" on a visualguard decoder ran all three channels while reporting
+    the result as "attention".
+    """
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    base = EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.0, lam=0.5)
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1, top_k=3),
+        evidence_config=base,
+        method="visualguard",
+    )
+    dec.backend = _StubBackend(logits)
+    dec.scorer = VisualEvidenceScorer(config=dec.evidence_config, backend=None)
+
+    captured = {}
+    original = VisualGuardDecoder._generate_visualguard
+
+    def spy(self, image, question, method, max_new_tokens=None, evidence_config=None):
+        captured["weights"] = evidence_config
+        return original(self, image, question, method, max_new_tokens, evidence_config)
+
+    VisualGuardDecoder._generate_visualguard = spy
+    try:
+        dec.generate("image.jpg", "Is there a dog?", method="attention")
+    finally:
+        VisualGuardDecoder._generate_visualguard = original
+
+    assert captured["weights"] is not None
+    assert captured["weights"].beta == 0.0, "the attention ablation was not applied"
+    # The decoder's own weights are restored afterwards.
+    assert dec.evidence_config.beta == base.beta
+
+
+def test_generate_does_not_mutate_the_shared_token_budget():
+    """The per-call budget must not be written into the shared config.
+
+    ``generate`` used to assign ``decoding_config.max_new_tokens`` for the
+    duration of the call. Two overlapping calls each captured the other's value
+    and the last restore won, permanently corrupting the budget for every later
+    sample.
+    """
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    dec = _decoder_with_stub(logits)
+    original = dec.decoding_config.max_new_tokens
+    dec.generate("image.jpg", "Is there a dog?", max_new_tokens=3)
+    assert dec.decoding_config.max_new_tokens == original
+
+
+def test_ensure_image_bindings_clears_features_when_the_image_is_gone():
+    """A sample with no image must not reuse the previous image's features.
+
+    The early return reset the cache *key* but left the previous sample's
+    projected features bound, so candidate cosines were computed against the
+    wrong image.
+    """
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    dec = _decoder_with_stub(logits)
+    dec.ensure_image_bindings(torch.ones(1, 3, 4, 4), image_key="a.jpg")
+    assert dec.scorer.candidate_embeddings_available
+
+    dec.ensure_image_bindings(None)
+    assert not dec.scorer.candidate_embeddings_available
+    assert dec._bound_image_key is None
+
+
+def test_ensure_image_bindings_reuses_features_for_the_same_image():
+    """Repeated samples of one image must not re-run the vision tower."""
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    dec = _decoder_with_stub(logits)
+    dec.backend.image_token_embeddings = lambda pv: torch.ones(4, 2)
+
+    calls = []
+
+    def counting(pv):
+        calls.append(1)
+        return torch.ones(4, 2)
+
+    dec.backend.image_token_embeddings = counting
+    for _ in range(3):
+        # Fresh tensor object each time, same image.
+        dec.ensure_image_bindings(torch.ones(1, 3, 4, 4), image_key="a.jpg")
+    assert len(calls) == 1, f"vision tower re-ran {len(calls)} times for one image"
+
+    dec.ensure_image_bindings(torch.ones(1, 3, 4, 4), image_key="b.jpg")
+    assert len(calls) == 2, "a new image did not refresh the bindings"
+
+
+def test_state_attention_is_allowed_to_decay_to_zero():
+    """A later step's genuine 0.0 must replace, not be discarded.
+
+    Guarding the adoption on ``> 0.0`` meant the state-level signal could never
+    decrease, only be replaced by another positive value.
+    """
+    logits = torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    dec = _decoder_with_stub(logits)
+
+    seen = []
+
+    def alternating(attentions, span, current_position=None):
+        # Prefill reports a real value, the cached step reports nothing.
+        seen.append(0.7 if not seen else 0.0)
+        return seen[-1]
+
+    dec.scorer.attention.state_image_attention = alternating
+    dec.generate("image.jpg", "Is there a dog?")
+
+    assert len(seen) >= 2
+    # Every cached step was asked for a value (None is never passed), and the
+    # zeros were not silently held back.
+    assert seen[0] == 0.7

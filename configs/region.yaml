@@ -3,9 +3,11 @@
 # REQUIRES a grounding backend. Run with:
 #   python -m src.run --benchmark pope --method region \
 #       --grounding-backend hf_grounding_dino
-# With --grounding-backend none the region channel contributes 0.0 and the run
-# records a note saying region evidence was disabled. That is NOT the same as a
-# region-only method and must not be reported as one.
+#
+# With --grounding-backend none the run is REJECTED, not degraded: every candidate
+# would score the same VES, so the penalty could never re-order anything and the
+# run would be indistinguishable from unmodified greedy while claiming to be a
+# region ablation. That is a misleading result, not a weaker one.
 
 defaults: visualguard
 

@@ -101,11 +101,11 @@ Select next token → repeat autoregressively (KV-cached)
 | Per-step intervention audit trail | ✅ |
 | POPE evaluation (random / popular / adversarial) | ✅ |
 | MME evaluation (official 14-subtask protocol) | ✅ |
-| Ablation runner + results-table builder (`not run` for missing cells) | ✅ |
-| Provenance block in every result JSON | ✅ |
+| Ablation runner + results-table builder (one row per run, `not run` for missing cells) | ✅ |
+| Provenance block in every result JSON, recording the token budget that actually ran | ✅ |
 | YAML configs with inheritance + CLI overrides (unknown keys raise) | ✅ |
 | 4-bit / 8-bit quantisation (CUDA) | ✅ |
-| Unit + integration tests (no downloads required) | ✅ |
+| Unit + integration tests, no downloads required (297 tests) | ✅ |
 | Full benchmark results | ❌ Not yet run |
 | HallusionBench | ❌ Not wired in |
 | LVLM backends other than LLaVA-family | ❌ Extension point only |
@@ -124,7 +124,9 @@ VES(t) = α · AttentionEvidence(t) + β · SemanticEvidence(t) + γ · RegionEv
                                       α + β + γ
 ```
 
-Dividing by the sum of *active* weights keeps `VES` in `[0, 1]` however many channels are enabled, so a one-channel ablation is directly comparable to the full method.
+Dividing by the sum of the weights that are actually switched on keeps `VES` in `[0, 1]` however many channels are enabled, so a one-channel ablation is directly comparable to the full method.
+
+**A channel that could not be measured contributes `0.5`, not `0.0` and not `1.0`.** This is load-bearing rather than cosmetic. Each channel is normalised *within the candidate set*, and an all-equal candidate set is a zero-span range — so feeding a constant through min-max maps it to `1.0`, i.e. *maximum* evidence. An unmeasured channel would therefore have reported full support, pushed `VES` above `threshold`, and silently switched off the penalty for its own candidates. `0.5` is equally rank-preserving (every candidate still ties) without fabricating support. Unavailable channels say so in the run's `notes`.
 
 **AttentionEvidence.** Self-attention rows belong to sequence *positions*, not candidate tokens, so attention alone cannot rank candidates within a step. The channel therefore mixes two components via `attention_candidate_mix` (`w`):
 
@@ -140,9 +142,27 @@ AttentionEvidence(t) = (1 − w) · image_attention + w · embed_cos(t)
 
 `w = 0` is purely state-level, `w = 1` purely candidate-level. Default `w = 0.5`.
 
+Note the consequence of that decomposition: at `w = 0` the channel is a property
+of the decoding *state*, so it is **identical for every candidate at a step** and
+cannot re-order anything. A run with `alpha > 0` and `attention_candidate_mix = 0`
+is therefore rejected by the runner — it would be unmodified greedy decoding
+wearing an "attention only" label. `configs/attention.yaml` documents the knob but
+keeps the default `0.5`.
+
 **SemanticEvidence.** CLIP similarity between the image and the word fragment being formed (`image ↔ "dog"` vs `image ↔ "cat"`), min-max normalised within the candidate set so it is scale-free. Candidates are wrapped in a minimal caption template because CLIP scores bare nouns inconsistently.
 
-**RegionEvidence.** Best detector confidence among open-vocabulary detections whose label supports the candidate phrase. When no grounding backend is enabled it contributes exactly `0.0` and the run records `region_evidence_disabled`. There is no synthetic-detection fallback.
+**RegionEvidence.** Best detector confidence among open-vocabulary detections whose label supports the candidate phrase, min-max normalised within the candidate set like the other two channels.
+
+The detector runs **once per image**, against a vocabulary fixed before generation starts (the question's content words, with prompt scaffolding filtered out). Running it per step is what makes region evidence impractical: a detector is orders of magnitude slower than an LM forward pass, and the phrase set changes every step. The cost is that a candidate phrase outside that vocabulary carries no information and scores `0.0` — a recorded limitation, not a silent staleness bug. Matching is on **whole tokens**, so `cat` does not match `cattle`.
+
+Two failure modes are refused outright rather than papered over:
+
+- A run with `gamma > 0` and no grounding backend is **rejected**. It would otherwise produce a constant `VES`, the penalty could never re-order anything, and the run would be indistinguishable from unmodified greedy while reporting a region ablation.
+- The upstream `groundingdino` backend labels every box with the whole caption, which would give each vocabulary word the same top-box confidence. Boxes with no per-box phrase attribution are dropped rather than labelled with the caption, and a warning is logged.
+
+### `threshold` is a percentile, not an absolute grounding level
+
+Because every channel is normalised across the top-k candidates at the current step, `VES` is a **within-step ranking**. `threshold = 0.35` therefore selects roughly the weakest third of the top-k rather than "everything below a fixed amount of image support", and the penalty does not fire at all when all candidates score closely. This is stated rather than hidden, because it changes what a `VES` number means; absolute calibration would need a channel normalised across the vocabulary rather than across the candidate set.
 
 ### Hallucination penalty
 
@@ -154,7 +174,9 @@ logit'_t   = logit_t − penalty(t)
 Two deliberate choices:
 
 - **The penalty is thresholded, not uniform.** `penalty = 0` whenever `VES(t) ≥ threshold`. Penalising every token equally would shift the whole distribution and damage fluency for no hallucination benefit.
-- **Only content-bearing tokens are penalised.** Articles, auxiliaries, prepositions and punctuation are flagged by a conservative lexical filter and exempt (`penalise_function_words: false` in all shipped configs). Rewriting function words is the fastest way to break generation quality.
+- **Only content-bearing tokens are penalised.** Articles, auxiliaries, prepositions and punctuation are flagged by a conservative lexical filter and exempt by default (`penalise_function_words: false` in all shipped configs). Rewriting function words is the fastest way to break generation quality.
+
+Note that the filter sees *sub-word fragments* — `is_content_bearing` is asked about `"ph"` and `"pho"` while `"photograph"` is being formed — so intervention strength depends partly on the tokenizer's vocabulary. See *Known Limitations*.
 
 ### Methods compared
 
@@ -277,7 +299,8 @@ VisualGuard-LVLM/
 │   ├── test_decoder_intervention.py
 │   ├── test_llava_backend.py
 │   ├── test_config_and_data.py
-│   └── test_evaluators_integration.py
+│   ├── test_evaluators_integration.py
+│   └── test_make_results_table.py
 │
 ├── results/                          # Run outputs (gitignored except .gitkeep)
 ├── requirements.txt
@@ -392,7 +415,9 @@ python -m src.run --benchmark pope --method visualguard \
     --gamma 0.5 --grounding-backend hf_grounding_dino ...
 ```
 
-If the backend is unavailable the run **fails with install guidance** rather than silently degrading. `--grounding-backend none` disables the channel explicitly, and the run records that fact.
+If the backend is unavailable the run **fails with install guidance** rather than silently degrading.
+
+`--grounding-backend none` disables the channel explicitly — but a run that sets `gamma > 0` without a backend is **rejected outright**, because it would produce a constant `VES` that cannot re-order any candidate. Such a run is indistinguishable from unmodified greedy while claiming to be a region ablation, so the runner refuses it and says what to pass instead.
 
 **Step 6 — Build the ablation table**
 
@@ -408,6 +433,18 @@ python scripts/run_ablations.py \
 
 python scripts/make_results_table.py --results-dir results
 ```
+
+Each row is run against its **shipped YAML** (`--config <name>`), so the row that is
+measured is the row that is documented. Add `--dry-run` to print the commands, or
+`--smoke` for a two-samples-per-split pipeline check (not comparable to a real
+run, and labelled as such). Rows D and F need a detector and are skipped with a
+warning when `--grounding-backend none` is given.
+
+The table has **one row per run, not per method name**. Rows F, G and every
+lambda-sweep point all record `method: visualguard`, so keying on the method alone
+would silently drop all but one of them. Rows whose weights are not canonical for
+their method are labelled with those weights, e.g.
+`visualguard variant [a1 b0 g1 lam0.5]`.
 
 ---
 
@@ -442,18 +479,36 @@ Computed by `src/evaluation/metrics.py`:
 
 Per-sample predictions are written to `results/pope_<setting>_<method>_predictions.jsonl`, so any run can be re-scored or audited without re-running the model.
 
-Two honesty guards: an answer that cannot be parsed as yes/no is counted as an error and reported separately as `unparseable` (never coerced to a class), and runs whose yes-ratio exceeds 0.95 are flagged, because such a model can look good on recall while being useless.
+Three honesty guards:
+
+1. An answer that cannot be parsed as yes/no is counted as an error and reported
+   separately as `unparseable`. It is never coerced to a class, and it is *not*
+   folded into the false positives — it contains no assertion about the object,
+   so counting it as one would report a model that emitted garbage as
+   hallucinating 100% of the time.
+2. `yes_ratio` / `no_ratio` are computed over **parseable** answers only, so they
+   measure yes-tilting rather than parse-failure rate. Runs whose yes-ratio
+   exceeds 0.95 are flagged, because such a model can look good on recall while
+   being useless.
+3. `hallucination_rate` is `FP / (all "no" items)`, and is likewise unaffected by
+   unparseable answers.
 
 ### MME
 
 Implements the official MME protocol in full — no external evaluator service and no simulated score:
 
+`accuracy` is per **question**, not a macro-average over images, so a truncated
+run still follows the official definition. Subtask scores are summed into the two
+categories and then added; `perception_subtasks_measured` /
+`cognition_subtasks_measured` record how many subtasks contributed, so a run where
+nothing ran is distinguishable from a run where every subtask scored zero.
+
 ```
 accuracy      = correct questions / all questions
 accuracy_plus = images where BOTH questions are correct / all images
-score         = 100 · (accuracy + accuracy_plus) / 2     # per subtask, capped at 200
+score         = 100 · (accuracy + accuracy_plus)          # per subtask, max 200
 category      = sum of subtask scores                    # perception / cognition
-total         = sum of present categories
+total         = perception_score + cognition_score
 ```
 
 14 subtasks — Perception: existence, count, position, color, posters, celebrity, scene, landmark, artwork, OCR. Cognition: commonsense_reasoning, numerical_calculation, text_translation, code_reasoning.
@@ -506,8 +561,13 @@ These are enforced in code, not merely intended:
 | No random / fake images | `src/data/*.py` resolve real paths and raise with the probed locations; `require_images=True` by default |
 | No fabricated metrics | `pope_metrics` / `mme_subtask_scores` raise on empty input rather than returning `0.0` |
 | No hidden synthetic evidence | A requested grounding backend raises `GroundingUnavailable`; it never falls back to the null backend |
-| Unparseable answers surfaced | Counted as errors and reported as `unparseable`, never coerced |
-| Unknown config keys rejected | `build_configs` raises on any key no dataclass claims |
+| Unmeasurable channels are neutral | A channel that cannot be measured contributes `0.5` and records a note. It is never allowed through the min-max normaliser, which would map a constant to `1.0` (maximum evidence) and disable the penalty |
+| A constant channel is refused | `gamma > 0` with `--grounding-backend none`, or `alpha > 0` with `attention_candidate_mix = 0`, raises at config-resolution time — before the checkpoint is downloaded — instead of producing a run identical to greedy |
+| Unparseable answers surfaced | Counted in `total` and reported as `unparseable`, never coerced, and never counted as false positives or hallucinations |
+| Unknown config keys rejected | `build_configs` raises on any key no dataclass claims, **and** on any key two dataclasses both claim |
+| Every run gets its own table row | The results table keys on `provenance.run_name`; rows sharing a `method` are disambiguated by their evidence weights |
+| Comparability checks cannot crash | The model/seed/max-samples checks tolerate missing and `null` provenance instead of raising while trying to report a problem |
+| Runtime errors are not swallowed | Optional-keyword support is decided by signature inspection, so a `TypeError` from inside the decoder propagates instead of triggering a silent retry at different settings |
 | Interventions auditable | `GenerationResult.interventions` / `interventions_detail` record whether evidence changed the chosen token |
 | Datasets / checkpoints uncommitted | `.gitignore` excludes `*.jsonl`, `*.safetensors`, `*.pt`, `results/*` and dataset folders |
 | Mocks confined to tests | Stubs and synthetic tensors appear only under `tests/` and `scripts/smoke_test.py`; benchmarks use real data exclusively |
@@ -526,6 +586,9 @@ These are enforced in code, not merely intended:
 | `Unknown config keys` | A key in your YAML or flags matches no config dataclass — check for typos |
 | Ablation rows D / F skipped | Expected without `--grounding-backend hf_grounding_dino` |
 | Table shows `not run` | That run does not exist in `results/` yet — by design, never a zero |
+| `gamma > 0` but `--grounding-backend none` | The run is rejected because it would measure no regions. Pass a backend, or `--gamma 0` |
+| `attention_candidate_mix = 0` with `alpha > 0` | Rejected: without the candidate-level term the attention channel is a per-step constant. Use the default `0.5`, or `--alpha 0` |
+| Two table rows look identical | Their configurations are identical too; the run name is appended to disambiguate |
 | Rows flagged as non-comparable | Runs used different models, seeds or `--max-samples` |
 
 ---
@@ -550,11 +613,11 @@ Parameters live in `configs/*.yaml` and are overridden by CLI flags. Precedence:
 | `--lambda` | `0.5` | Penalty strength |
 | `--threshold` | `0.35` | VES below this counts as insufficient visual support |
 | `--top-k` | `50` | Candidate tokens scored per step |
-| `--max-new-tokens` | `64` | Generation length (POPE uses 16, MME 32 unless overridden) |
+| `--max-new-tokens` | benchmark | Generation length. The benchmark's budget wins: POPE 16, MME 32. The resolved config is updated to match, so provenance records what ran |
 | `--clip-model` | `openai/clip-vit-base-patch32` | CLIP checkpoint for semantic evidence |
 | `--grounding-backend` | `none` | `none`, `hf_grounding_dino` or `grounding_dino` |
 | `--grounding-box-threshold` | `0.3` | Detector box confidence cutoff |
-| `--device` / `--dtype` | `auto` / `auto` | Device and precision |
+| `--device` / `--dtype` | `auto` / `auto` | Device and precision for the **LVLM**. In a YAML these keys mean the model; use `grounding_dtype` for the detector |
 | `--quantization` | `none` | `none`, `4bit`, `8bit` |
 | `--attn-implementation` | `eager` | Must stay `eager` for attention evidence |
 | `--setting` | all three | Single POPE setting |
@@ -565,6 +628,11 @@ Parameters live in `configs/*.yaml` and are overridden by CLI flags. Precedence:
 | `--output-dir` / `--run-name` | `results/` / auto | Where results are written |
 
 Attention aggregation (`layer_fraction`, `head_aggregation`, `layer_aggregation`, `attention_candidate_mix`) and `normalize` are set in YAML.
+
+A key claimed by more than one config dataclass is **rejected** as ambiguous rather
+than bound to whichever class happened to be considered first — `dtype` exists on
+both the model and the detector, and silently picking a winner would leave the user
+no way to notice. Unset CLI flags are `None` and never overwrite a YAML value.
 
 ---
 
@@ -589,6 +657,10 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 - **POPE answers are a single token**, so attention evidence rests almost entirely on the prefill row. Conclusions about POPE do not automatically transfer to long-form captioning.
 - **CLIP is a noisy judge, not ground truth.** It is trained on web image–text data and carries its own biases.
 - **Region evidence is off by default** because the detector is the dominant cost and the most fragile dependency.
+- **`threshold` is a percentile, not an absolute level.** Every channel is normalised across the top-k candidates at the current step, so `VES` is a within-step ranking. `threshold = 0.35` selects roughly the weakest third of the top-k rather than everything below a fixed amount of image support, and the penalty does not fire when all candidates score closely. Absolute calibration would need a channel normalised across the vocabulary.
+- **The penalty can only reorder within the top-k.** Candidates are drawn from the top-k by logit, so VisualGuard can promote one of those over another but can never pull in a token outside the set.
+- **The penalty is applied to sub-word fragments.** `is_content_bearing` sees `"ph"` and `"pho"` while `"photograph"` is being formed, so intervention strength partly depends on the tokenizer's vocabulary.
+- **Region vocabulary is fixed before generation.** The detector runs once per image against the question's content words, so a correct answer that was never asked about scores `0.0` — indistinguishable from a hallucination on the region channel.
 
 **Engineering**
 
@@ -596,6 +668,9 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 - **Much slower than greedy decoding.** One forward pass per step plus one CLIP forward per step. See `efficiency` in any result JSON.
 - **Capability cost is unquantified.** MME cost is measured by the framework, but no experiment has been run yet.
 - **HallusionBench is not wired in.** No loader or evaluator exists, and none is claimed.
+- **Baseline and VisualGuard do not decode under byte-identical conditions.** Baselines go through HF `model.generate`, which merges the checkpoint's `generation_config` (length penalty, suppression tokens); the VisualGuard loop applies none of those, and ignores `repetition_penalty`. Attention matrices are also requested on every VisualGuard step, so the timing comparison across the table is not apples-to-apples.
+- **Evidence scorers are stateful across a sample.** Image features, detections and LM embeddings are cached per image and reset at sample boundaries by the decoder. A caller driving `score_candidates` directly must do that itself.
+- **The decoder is not thread-safe.** Per-sample mutable state (bindings, caches, the grounding backend) assumes one sample at a time; the benchmarks are sequential.
 
 ---
 

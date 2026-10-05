@@ -228,6 +228,36 @@ def resolve_quantization(args: argparse.Namespace) -> Dict[str, Any]:
     return {}
 
 
+def validate_evidence_reachable(method: str, evidence: Any, grounding: Any) -> None:
+    """Reject a run whose active channels cannot rank candidates.
+
+    VisualGuard re-orders candidates within a step, so a channel that gives every
+    candidate the same value cannot affect the outcome. Such a run is
+    indistinguishable from unmodified greedy while claiming to be an ablation of
+    that channel, so it is refused.
+
+    Checked here, before the checkpoint is loaded: the decoder raises the same
+    error, but by then a multi-billion-parameter download has already happened.
+    """
+    if method in BASELINE_METHODS:
+        return
+    if evidence.alpha > 0 and evidence.attention_candidate_mix <= 0.0:
+        raise ConfigError(
+            f"--method {method} has alpha={evidence.alpha} but "
+            "attention_candidate_mix=0, which leaves AttentionEvidence a per-step "
+            "constant: image attention describes the decoding state, not the "
+            "candidate, so no candidate can be re-ordered. Use the default "
+            "attention_candidate_mix=0.5, or --alpha 0."
+        )
+    if evidence.gamma > 0 and grounding.backend == "none":
+        raise ConfigError(
+            f"--method {method} has gamma={evidence.gamma} but "
+            "--grounding-backend is 'none', so region evidence cannot be measured "
+            "and the run would be identical to greedy decoding. Pass "
+            "--grounding-backend hf_grounding_dino, or --gamma 0."
+        )
+
+
 def build_experiment_configs(
     args: argparse.Namespace,
 ) -> Dict[str, Any]:
@@ -310,6 +340,8 @@ def build_experiment_configs(
             **resolve_quantization(args),
         },
     )
+    validate_evidence_reachable(args.method, evidence, grounding)
+
     return {
         "lvlm": lvlm,
         "decoding": decoding,

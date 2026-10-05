@@ -2,14 +2,21 @@
 # grounding backend is enabled).
 #
 # Weights are interpreted after per-channel normalisation into [0, 1], so
-# alpha/beta/gamma are directly comparable. The combined score is divided by
-# the sum of active weights, so VES stays in [0, 1] as channels are switched off.
+# alpha/beta/gamma are directly comparable. The combined score is divided by the
+# sum of the weights that are actually switched on, so VES stays in [0, 1] as
+# channels are switched off.
+#
+# Setting gamma > 0 REQUIRES --grounding-backend; the runner rejects the
+# combination rather than reporting a run that measured no regions.
 
 alpha: 1.0
 beta: 1.0
 gamma: 0.0            # region evidence off unless a grounding backend is enabled
 lam: 0.5              # hallucination penalty strength
 threshold: 0.35       # VES below this counts as insufficient visual support
+                       # NOTE: channels are normalised within the candidate set,
+                       # so this is a percentile over the top-k, not an absolute
+                       # level of image support.
 
 # Attention aggregation. layer_fraction selects the top fraction of layers,
 # where cross-modal grounding is empirically strongest.
