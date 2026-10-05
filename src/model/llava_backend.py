@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -374,9 +375,11 @@ class LLaVAHFBackend(LVLMBackend):
     def _check_attention_support(self) -> None:
         """Warn loudly if attention evidence will be unavailable.
 
-        Attention evidence needs the raw attention matrices. If the loaded
-        config cannot produce them we warn once and the evidence module falls
-        back to a documented alternative instead of silently returning zeros.
+        Attention evidence needs the raw attention matrices, which only the eager
+        kernel returns. Note that ``config.output_attentions`` is simply its
+        default (``False``) on almost every checkpoint and says nothing about
+        availability, since we request ``output_attentions=True`` explicitly on
+        each forward pass — so it is deliberately not checked here.
         """
         model_cfg = getattr(self.model, "config", None)
         impl = getattr(model_cfg, "_attn_implementation", None)
@@ -384,13 +387,9 @@ class LLaVAHFBackend(LVLMBackend):
             warnings.warn(
                 f"Model loaded with attn_implementation={impl!r}; attention "
                 "matrices will not be returned, so AttentionEvidence falls back "
-                "to image-token hidden-state cosine similarity. Re-run with "
-                "--attn-implementation eager to enable true attention evidence."
-            )
-        if getattr(model_cfg, "output_attentions", None) is False:
-            warnings.warn(
-                "Model config sets output_attentions=False. Attention evidence "
-                "will use the documented hidden-state fallback."
+                "to image-attention=0 plus candidate embedding similarity. "
+                "Re-run with --attn-implementation eager to enable true "
+                "attention evidence."
             )
 
     @staticmethod
@@ -406,35 +405,155 @@ class LLaVAHFBackend(LVLMBackend):
     # encoding
     # ------------------------------------------------------------------
 
-    def encode_prompt(self, question: str) -> Dict[str, torch.Tensor]:
-        if self._tokenizer is None:
-            raise LVLMBackendError("Backend not loaded; call load() first.")
-        prompt = self.PROMPT_TEMPLATE.format(question=question.strip())
-        encoded = self._tokenizer(prompt, return_tensors="pt")
-        return {k: v.to(self.device) for k, v in encoded.items() if k == "input_ids"} | (
-            {"attention_mask": encoded["attention_mask"].to(self.device)}
-            if "attention_mask" in encoded
-            else {}
-        )
+    def build_prompt(self, question: str) -> str:
+        """Render the chat prompt for ``question``.
 
-    def preprocess_image(self, image: Any) -> torch.Tensor:
-        """Return a ``(1, 3, H, W)`` pixel-values tensor on the model device."""
+        Uses the checkpoint's own chat template when it provides one. This
+        matters: LLaVA-1.5 expects ``USER: <image>\\n... ASSISTANT:``, whereas
+        newer checkpoints built on Qwen/Llama-3 expect ChatML and will emit an
+        immediate end-of-turn token if given the LLaVA-1.5 format. Hardcoding a
+        single format silently produces empty answers on other models.
+        """
+        question = question.strip()
+        if self._processor is not None:
+            apply_template = getattr(self._processor, "apply_chat_template", None)
+            if callable(apply_template):
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": question},
+                        ],
+                    }
+                ]
+                try:
+                    prompt = apply_template(messages, add_generation_prompt=True)
+                    if isinstance(prompt, str) and prompt.strip():
+                        return prompt
+                except Exception as exc:
+                    logger.debug(
+                        "chat_template unavailable for %s (%s); using the "
+                        "LLaVA-1.5 template", self.config.model_name, exc,
+                    )
+        return self.PROMPT_TEMPLATE.format(question=question)
+
+    def prepare_inputs(
+        self, question: str, image: Any = None
+    ) -> Dict[str, torch.Tensor]:
+        """Build model inputs for one (question, image) pair.
+
+        The *processor* is used rather than the bare tokenizer on purpose: it
+        expands the single ``<image>`` placeholder into one placeholder per
+        vision patch. Tokenizing the prompt directly leaves a single placeholder,
+        and the model then rejects the call because the number of image tokens
+        does not match the number of image features.
+
+        Returns a dict that may contain ``input_ids``, ``attention_mask`` and
+        ``pixel_values``, already moved to the model device.
+        """
         if self._processor is None:
             raise LVLMBackendError("Backend not loaded; call load() first.")
-        from PIL import Image
+        prompt = self.build_prompt(question)
 
-        if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
-            pil_image = Image.open(image).convert("RGB")
-        elif isinstance(image, Image.Image):
-            pil_image = image.convert("RGB")
-        elif isinstance(image, torch.Tensor):
-            raise TypeError(
-                "preprocess_image expects a PIL image or a path, not a raw "
-                "tensor. Preprocessed tensors must come from this same backend."
-            )
+        processor = getattr(self._processor, "image_processor", self._processor)
+        pil_image = self._to_pil(image) if image is not None else None
+
+        inputs: Dict[str, torch.Tensor] = {}
+        if pil_image is not None:
+            try:
+                raw = self._processor(
+                    images=pil_image, text=prompt, return_tensors="pt"
+                )
+            except Exception:  # pragma: no cover - processor without text path
+                raw = {}
+            if "input_ids" in raw:
+                inputs = dict(raw)
+            else:
+                # Fall back to manual assembly, expanding the image placeholder
+                # to match the vision tower output when the config says so.
+                inputs = self._manual_inputs(prompt, pil_image, processor)
         else:
-            raise TypeError(f"Unsupported image input type: {type(image)!r}")
+            encoded = self._tokenizer(prompt, return_tensors="pt")
+            inputs = {k: v for k, v in encoded.items() if k in {"input_ids", "attention_mask"}}
 
+        out: Dict[str, torch.Tensor] = {}
+        dtype = self._model_dtype()
+        for key, value in inputs.items():
+            if key == "pixel_values":
+                out[key] = value.to(self.device, dtype=dtype)
+            elif key in {"input_ids", "attention_mask"}:
+                out[key] = value.to(self.device)
+        if "input_ids" not in out:
+            raise LVLMBackendError(
+                "Processor did not return input_ids; cannot build model inputs."
+            )
+        return out
+
+    def _manual_inputs(
+        self, prompt: str, pil_image: Image.Image, processor: Any
+    ) -> Dict[str, torch.Tensor]:
+        """Assemble inputs when the processor cannot handle text+image jointly.
+
+        Expands ``<image>`` into ``config.image_seq_length`` placeholder tokens
+        so the token count matches the vision tower output.
+        """
+        encoded = self._tokenizer(prompt, return_tensors="pt")
+        input_ids = encoded["input_ids"]
+        model_cfg = getattr(self.model, "config", None)
+        n_image = int(getattr(model_cfg, "image_seq_length", 0) or 0)
+        sentinel = self._image_token_index
+        if n_image > 0 and sentinel in input_ids[0].tolist():
+            row = input_ids[0].tolist()
+            pos = row.index(sentinel)
+            row = row[:pos] + [sentinel] * n_image + row[pos + 1:]
+            input_ids = torch.tensor([row], dtype=torch.long, device=input_ids.device)
+        pixel_values = processor(images=pil_image, return_tensors="pt")["pixel_values"]
+        result = {"input_ids": input_ids, "pixel_values": pixel_values}
+        if "attention_mask" in encoded:
+            mask = torch.ones_like(input_ids)
+            result["attention_mask"] = mask
+        return result
+
+    @staticmethod
+    def _to_pil(image: Any) -> "Image.Image":
+        """Coerce a path / PIL image to RGB PIL."""
+        if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
+            return Image.open(image).convert("RGB")
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        if isinstance(image, torch.Tensor):
+            raise TypeError(
+                "Expected a PIL image or a path, not a preprocessed tensor. "
+                "Tensors must be produced by this backend's preprocess_image."
+            )
+        raise TypeError(f"Unsupported image input type: {type(image)!r}")
+
+    def encode_prompt(self, question: str) -> Dict[str, torch.Tensor]:
+        """Tokenise ``question`` into an LLaVA-style chat prompt.
+
+        For text-only use. When an image is involved prefer
+        :meth:`prepare_inputs`, which expands the image placeholder correctly.
+        """
+        if self._tokenizer is None:
+            raise LVLMBackendError("Backend not loaded; call load() first.")
+        prompt = self.build_prompt(question)
+        encoded = self._tokenizer(prompt, return_tensors="pt")
+        return {
+            k: v.to(self.device)
+            for k, v in encoded.items()
+            if k in {"input_ids", "attention_mask"}
+        }
+
+    def preprocess_image(self, image: Any) -> torch.Tensor:
+        """Return a pixel-values tensor on the model device.
+
+        Prefer :meth:`prepare_inputs` for generation, since it guarantees the
+        image placeholder count matches the vision tower output.
+        """
+        if self._processor is None:
+            raise LVLMBackendError("Backend not loaded; call load() first.")
+        pil_image = self._to_pil(image)
         processor = getattr(self._processor, "image_processor", self._processor)
         pixel_values = processor(images=pil_image, return_tensors="pt")["pixel_values"]
         return pixel_values.to(self.device, dtype=self._model_dtype())

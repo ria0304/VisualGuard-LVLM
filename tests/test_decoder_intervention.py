@@ -246,3 +246,59 @@ def test_generation_result_serialises():
 def test_trailing_fragment_drives_candidate_text():
     assert trailing_word_fragment("a dog") == "dog"
     assert trailing_word_fragment("a dog ") == ""
+
+
+def test_baseline_and_visualguard_share_one_model_instance():
+    """Scientific requirement: all compared methods must use the same LVLM.
+
+    If each method loaded its own copy, any metric difference could be
+    attributed to checkpoint/quantisation nondeterminism instead of the
+    decoding rule. This pins that a single decoder instance -- and therefore a
+    single loaded model -- serves every method.
+    """
+    from src.model.visual_guard_decoder import ALL_METHODS
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(),
+        evidence_config=EvidenceConfig(alpha=1.0, beta=0.0, gamma=0.0, lam=1.0),
+        method="visualguard",
+    )
+    sentinel_model = object()
+    dec.backend = _StubBackend(torch.tensor([[0.0, 1.0]]))
+    dec.backend.model = sentinel_model
+
+    for method in sorted(ALL_METHODS):
+        dec.method = method
+        # The backend is untouched by a method switch: same object, same model.
+        assert dec.backend.model is sentinel_model
+        assert dec.backend is not None
+
+
+def test_set_method_zeroes_penalty_for_baselines():
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        evidence_config=EvidenceConfig(alpha=1.0, beta=1.0, gamma=1.0, lam=3.0),
+        method="visualguard",
+    )
+    dec.set_method("greedy")
+    assert dec.method == "greedy"
+    assert dec.scorer is None
+
+
+def test_set_method_rejects_unknown():
+    dec = VisualGuardDecoder(method="baseline")
+    with pytest.raises(ValueError, match="Unknown method"):
+        dec.set_method("not_a_method")
+
+
+def test_baseline_method_does_not_construct_evidence_backends():
+    """Baselines must not pay for CLIP or a detector."""
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        method="baseline",
+        evidence_config=EvidenceConfig(alpha=1.0, beta=1.0, gamma=1.0),
+    )
+    dec.backend = _StubBackend(torch.tensor([[0.0, 1.0]]))
+    dec.load_evidence = lambda: pytest.fail("baseline must not load evidence backends")
+    assert dec.scorer is None

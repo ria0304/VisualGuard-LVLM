@@ -411,7 +411,7 @@ class AttentionEvidence:
                 continue
             head_scores: List[float] = []
             for h in range(attn.shape[1]):
-                head = attn[0, h, row, :].float()
+                head = attn[0, h, row, :].detach().float()
                 head = head.clamp_min(0.0)
                 total = head.sum()
                 if total <= EPS:
@@ -450,6 +450,28 @@ class AttentionEvidence:
         sims = cand @ img_vec
         # Cosine lives in [-1, 1]; map to [0, 1] before later min-maxing.
         return [float((s + 1.0) / 2.0) for s in sims]
+
+
+def _as_tensor(features: Any) -> torch.Tensor:
+    """Extract a tensor from CLIP feature output.
+
+    Depending on the ``transformers`` version, ``get_{image,text}_features``
+    returns either a tensor or a model output object. Handle both so the
+    semantic channel does not break across library versions.
+    """
+    if torch.is_tensor(features):
+        return features
+    for attr in ("pooler_output", "text_embeds", "image_embeds", "last_hidden_state"):
+        value = getattr(features, attr, None)
+        if torch.is_tensor(value):
+            return value
+    if isinstance(features, (tuple, list)) and features:
+        first = features[0]
+        if torch.is_tensor(first):
+            return first
+    raise TypeError(
+        f"Could not extract a tensor from CLIP features of type {type(features)!r}"
+    )
 
 
 class SemanticEvidence:
@@ -493,16 +515,16 @@ class SemanticEvidence:
         inputs = self.processor(images=pil_image, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():
-            feats = self.model.get_image_features(**inputs)
-        self._image_features = F.normalize(feats.float(), dim=-1)
+            feats = _as_tensor(self.model.get_image_features(**inputs))
+        self._image_features = F.normalize(feats.detach().float(), dim=-1)
         return self._image_features
 
-    def raw_similarities(self, texts: Sequence[str]) -> List[float]:
-        """Raw CLIP cosine similarities between the image and each text."""
+    def raw_similarities(self, image: Any, texts: Sequence[str]) -> List[float]:
+        """Raw CLIP cosine similarities between ``image`` and each text."""
         self.load()
         if not texts:
             return []
-        img = self.encode_image(self._pending_image)
+        img = self.encode_image(image)
         inputs = self.processor(
             text=[_clip_prompt(t) for t in texts],
             return_tensors="pt",
@@ -511,8 +533,8 @@ class SemanticEvidence:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items() if k in {"input_ids", "attention_mask"}}
         with torch.no_grad():
-            txt = self.model.get_text_features(**inputs)
-        txt = F.normalize(txt.float(), dim=-1)
+            txt = _as_tensor(self.model.get_text_features(**inputs))
+        txt = F.normalize(txt.detach().float(), dim=-1)
         sims = (txt @ img.T).squeeze(-1)
         return [float(s) for s in sims]
 
@@ -520,11 +542,7 @@ class SemanticEvidence:
         """Normalised semantic evidence in ``[0, 1]`` for each text."""
         if not texts:
             return []
-        self._pending_image = image
-        try:
-            raw = self.raw_similarities(texts)
-        finally:
-            self._pending_image = None
+        raw = self.raw_similarities(image, texts)
         return normalise_values(raw, self.config.normalize)
 
     def reset_image(self) -> None:

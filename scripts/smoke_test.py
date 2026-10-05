@@ -117,19 +117,23 @@ def main() -> int:
           str(backend.device))
 
     # ---- 2. encoding ------------------------------------------------
-    enc = backend.encode_prompt("Is there a dog in the image?")
-    check("prompt encoded", "input_ids" in enc and enc["input_ids"].shape[-1] > 0,
-          f"tokens={enc['input_ids'].shape[-1]}")
+    inputs = backend.prepare_inputs("Is there a dog in the image?", image_path)
+    check("prompt + image encoded together", "input_ids" in inputs)
+    n_tokens = inputs["input_ids"].shape[-1]
+    check("prompt encoded", n_tokens > 0, f"tokens={n_tokens}")
 
-    pixel_values = backend.preprocess_image(image_path)
-    # LLaVA processors may return (1, 3, H, W) or, when a vision patch size is
-    # configured, (1, num_patches, 3, H, W).
-    check("image preprocessed to pixel_values",
-          pixel_values.dim() in (4, 5) and pixel_values.shape[-3] == 3,
-          f"shape={tuple(pixel_values.shape)}")
+    pixel_values = inputs.get("pixel_values")
+    check("pixel_values present", pixel_values is not None,
+          f"shape={None if pixel_values is None else tuple(pixel_values.shape)}")
+    # The processor must expand <image> into one placeholder per vision patch,
+    # otherwise the model rejects the call (token/feature mismatch).
+    span = backend.image_token_span(inputs["input_ids"], pixel_values)
+    check("image token span resolved", span is not None and span[1] > span[0], f"span={span}")
+    check("image span fits the sequence", span is None or span[1] <= n_tokens,
+          f"span={span} n_tokens={n_tokens}")
 
     # ---- 3. forward steps -------------------------------------------
-    step = backend.initial_step(enc["input_ids"], pixel_values, output_attentions=True)
+    step = backend.initial_step(inputs["input_ids"], pixel_values, output_attentions=True)
     check("initial_step returned logits", step.logits.shape[0] == 1,
           f"vocab={step.logits.shape[-1]}")
     check("initial_step returned a KV cache", step.past_key_values is not None)
@@ -171,14 +175,46 @@ def main() -> int:
     check("baseline produced no interventions", out.interventions == 0)
     check("baseline latency recorded", out.latency_s > 0)
 
-    # ---- 5. optional CLIP channel ----------------------------------
+    # ---- 5. full VisualGuard decoding loop (attention channel only) ----
+    # This is the central claim: the intervention runs inside the real
+    # autoregressive loop and can change which token is selected.
+    try:
+        vg = VisualGuardDecoder(
+            lvlm_config=LVLMConfig(
+                model_name=args.model, device=args.device, dtype="float32"
+            ),
+            decoding_config=DecodingConfig(max_new_tokens=args.max_new_tokens, top_k=5),
+            evidence_config=EvidenceConfig(
+                alpha=1.0, beta=0.0, gamma=0.0, lam=5.0, threshold=1.0,
+                attention_candidate_mix=0.5,
+            ),
+            method="visualguard",
+        )
+        vg.backend = backend
+        vg.scorer = VisualEvidenceScorer(config=vg.evidence_config, backend=backend)
+        out = vg.generate(image_path, "Describe the image.")
+        check("VisualGuard loop generated text", isinstance(out.text, str),
+              f"text={out.text!r}")
+        check("VisualGuard produced per-step candidates", out.num_generated_tokens > 0,
+              f"tokens={out.num_generated_tokens}")
+        check("VisualGuard reports interventions", out.interventions >= 0,
+              f"interventions={out.interventions}")
+        check("VisualGuard recorded a latency", out.per_token_latency_s > 0,
+              f"{out.per_token_latency_s*1000:.1f} ms/token")
+        if out.interventions > 0:
+            print("       intervention detail: "
+                  f"{out.interventions_detail[:2]}")
+    except Exception as exc:  # pragma: no cover
+        check("VisualGuard decoding loop", False, f"{type(exc).__name__}: {exc}")
+
+    # ---- 6. optional CLIP channel ----------------------------------
     if not args.skip_clip:
         try:
             from src.model.visual_evidence import SemanticEvidence
 
             sem = SemanticEvidence(EvidenceConfig(clip_model_name="openai/clip-vit-base-patch32"))
             sem.encode_image(image_path)
-            sims = sem.raw_similarities(["dog", "cat"])
+            sims = sem.raw_similarities(image_path, ["dog", "cat"])
             check("CLIP produced similarities", len(sims) == 2 and all(
                 isinstance(s, float) for s in sims), f"sims={[round(s, 3) for s in sims]}")
         except Exception as exc:  # pragma: no cover

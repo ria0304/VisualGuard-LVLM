@@ -362,10 +362,9 @@ class VisualGuardDecoder:
         if model is None:
             raise RuntimeError("Backend has no HF model; cannot run baseline decode")
 
-        enc = self.backend.encode_prompt(question)
-        input_ids = enc["input_ids"]
-        pixel_values = self.backend.preprocess_image(image)
-        attention_mask = enc.get("attention_mask")
+        inputs = self.backend.prepare_inputs(question, image)
+        input_ids = inputs["input_ids"]
+        pixel_values = inputs.get("pixel_values")
 
         kwargs: Dict[str, Any] = dict(
             max_new_tokens=self.decoding_config.max_new_tokens,
@@ -373,8 +372,8 @@ class VisualGuardDecoder:
             repetition_penalty=self.decoding_config.repetition_penalty,
             pad_token_id=self.backend.tokenizer.pad_token_id,
         )
-        if attention_mask is not None:
-            kwargs["attention_mask"] = attention_mask
+        if "attention_mask" in inputs:
+            kwargs["attention_mask"] = inputs["attention_mask"]
         if method in {"greedy", "baseline"}:
             kwargs.update(do_sample=False, num_beams=1)
         elif method == "sampling":
@@ -416,9 +415,9 @@ class VisualGuardDecoder:
         assert self.backend is not None and self.scorer is not None
         tokenizer = self.backend.tokenizer
 
-        enc = self.backend.encode_prompt(question)
+        enc = self.backend.prepare_inputs(question, image)
         input_ids = enc["input_ids"]
-        pixel_values = self.backend.preprocess_image(image)
+        pixel_values = enc.get("pixel_values")
 
         self.scorer.semantic.reset_image()
         self._clip_cache.clear()
