@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+config.json
+
+# Large datasets
+data/
+datasets/
+*.zip
+*.tar
+*.tar.gz
+
+# Model checkpoints / weights
+*.pt
+*.pth
+*.bin
+*.safetensors
+checkpoints/
+models/
+
+# Experiment outputs
+results/
+outputs/
+runs/
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+Unconfirmed 722013.crdownload
+paper/
