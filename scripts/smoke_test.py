@@ -147,6 +147,8 @@ def main() -> int:
         attn_value = scorer.attention.state_image_attention(step.attentions, span)
         check("attention evidence is bounded", 0.0 <= attn_value <= 1.0,
               f"value={attn_value:.4f} span={span}")
+        check("attention evidence is non-degenerate", attn_value > 0.0,
+              f"value={attn_value:.4f}; 0.0 means the image-token span was wrong")
 
         # cached step
         top = torch.argmax(step.logits, dim=-1, keepdim=True)
@@ -161,6 +163,9 @@ def main() -> int:
         bundle = scorer.score_candidates(image_path, cands, state_image_attention=attn_value)
         check("VES values bounded", all(0.0 <= c.ves <= 1.0 for c in bundle.candidates))
         check("penalties non-negative", all(c.penalty >= 0.0 for c in bundle.candidates))
+        check("scorer reported whether image features were bound",
+              isinstance(scorer.candidate_embeddings_available, bool),
+              f"available={scorer.candidate_embeddings_available}")
 
     # ---- 4. baseline path uses model.generate ----------------------
     base = VisualGuardDecoder(
@@ -178,6 +183,11 @@ def main() -> int:
     # ---- 5. full VisualGuard decoding loop (attention channel only) ----
     # This is the central claim: the intervention runs inside the real
     # autoregressive loop and can change which token is selected.
+    #
+    # ``lam`` is deliberately huge and ``threshold`` 1.0 so any evidence deficit
+    # produces a penalty. A soft configuration would let the loop pass with zero
+    # interventions and prove nothing, which is exactly how the attention
+    # channel's no-op bug went unnoticed.
     try:
         vg = VisualGuardDecoder(
             lvlm_config=LVLMConfig(
@@ -185,25 +195,71 @@ def main() -> int:
             ),
             decoding_config=DecodingConfig(max_new_tokens=args.max_new_tokens, top_k=5),
             evidence_config=EvidenceConfig(
-                alpha=1.0, beta=0.0, gamma=0.0, lam=5.0, threshold=1.0,
-                attention_candidate_mix=0.5,
+                alpha=1.0, beta=0.0, gamma=0.0, lam=50.0, threshold=1.0,
+                attention_candidate_mix=1.0,
+                penalise_function_words=False,
             ),
             method="visualguard",
         )
         vg.backend = backend
+        vg.evidence_config = EvidenceConfig(
+            alpha=1.0, beta=0.0, gamma=0.0, lam=50.0, threshold=1.0,
+            attention_candidate_mix=1.0, penalise_function_words=False,
+        )
         vg.scorer = VisualEvidenceScorer(config=vg.evidence_config, backend=backend)
+        # Bind embeddings exactly as load() does. Skipping this is what let the
+        # channel silently degenerate into a constant.
+        vg._bound_pixel_values = None
+        vg.ensure_image_bindings(pixel_values)
+
+        check("image features bound for candidate-level attention",
+              vg.scorer.candidate_embeddings_available,
+              "without these the attention channel cannot rank candidates")
+
         out = vg.generate(image_path, "Describe the image.")
         check("VisualGuard loop generated text", isinstance(out.text, str),
               f"text={out.text!r}")
         check("VisualGuard produced per-step candidates", out.num_generated_tokens > 0,
               f"tokens={out.num_generated_tokens}")
-        check("VisualGuard reports interventions", out.interventions >= 0,
-              f"interventions={out.interventions}")
         check("VisualGuard recorded a latency", out.per_token_latency_s > 0,
               f"{out.per_token_latency_s*1000:.1f} ms/token")
-        if out.interventions > 0:
-            print("       intervention detail: "
-                  f"{out.interventions_detail[:2]}")
+
+        # --- non-vacuous assertions on the intervention itself ---
+        check("VisualGuard actually intervened", out.interventions > 0,
+              f"interventions={out.interventions}; 0 means the evidence "
+              "penalty never changed the selected token")
+        check("intervention detail is auditable", len(out.interventions_detail) > 0,
+              f"recorded={len(out.interventions_detail)}")
+        if out.interventions_detail:
+            d = out.interventions_detail[0]
+            check("intervention recorded a chosen token with VES",
+                  "chosen_ves" in d and 0.0 <= d["chosen_ves"] <= 1.0, str(d))
+
+        # The whole point: VisualGuard must not reproduce the baseline verbatim.
+        # Same loop, same channel, but lam=0 -> no penalty at all, so this
+        # decodes greedily while `vg` decodes with evidence applied.
+        vg_loose = VisualGuardDecoder(
+            lvlm_config=LVLMConfig(
+                model_name=args.model, device=args.device, dtype="float32"
+            ),
+            decoding_config=DecodingConfig(max_new_tokens=args.max_new_tokens, top_k=5),
+            evidence_config=EvidenceConfig(
+                alpha=1.0, beta=0.0, gamma=0.0, lam=0.0, threshold=1.0,
+                attention_candidate_mix=1.0, penalise_function_words=False,
+            ),
+            method="visualguard",
+        )
+        vg_loose.backend = backend
+        vg_loose.scorer = VisualEvidenceScorer(
+            config=vg_loose.evidence_config, backend=backend)
+        vg_loose._bound_pixel_values = None
+        vg_loose.ensure_image_bindings(pixel_values)
+        out_loose = vg_loose.generate(image_path, "Describe the image.")
+        check("unpenalised control applies no penalty", out_loose.interventions == 0,
+              f"interventions={out_loose.interventions}")
+        check("penalised decoding differs from unpenalised decoding",
+              out_loose.token_ids != out.token_ids,
+              f"penalised={out.token_ids[:8]} unpenalised={out_loose.token_ids[:8]}")
     except Exception as exc:  # pragma: no cover
         check("VisualGuard decoding loop", False, f"{type(exc).__name__}: {exc}")
 

@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..data.mme import MMEDataError, MMESample, load_mme
-from .metrics import extract_verdict, mme_category_totals, mme_subtask_scores
+from .metrics import (
+    accepts_keyword,
+    extract_verdict,
+    mme_category_totals,
+    mme_subtask_scores,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,11 +125,18 @@ class MMEEvaluator:
         self.method = method
         self.prompt_template = prompt_template
         self.max_new_tokens = max_new_tokens
+        # Signature-inspected once; see :func:`accepts_keyword`.
+        self._generate_takes_budget = accepts_keyword(generate_fn, "max_new_tokens")
 
     def _predict(self, sample: MMESample) -> MMERecord:
         question = self.prompt_template.format(question=sample.question)
         started = time.perf_counter()
-        out = self.generate_fn(sample.image_path, question)
+        if self._generate_takes_budget:
+            out = self.generate_fn(
+                sample.image_path, question, max_new_tokens=self.max_new_tokens
+            )
+        else:
+            out = self.generate_fn(sample.image_path, question)
         latency = time.perf_counter() - started
 
         raw = getattr(out, "text", str(out))
@@ -223,8 +235,24 @@ class MMEEvaluator:
 def _image_key(image: str, subtask: str, question_id: str) -> str:
     """Group questions that belong to the same image.
 
-    MME asks two questions per image. Grouping by the image *path* recovers
-    that pairing; the question_id fallback keeps the grouping total even if two
-    distinct images share a filename across subtask directories.
+    MME asks two questions per image, and ``accuracy_plus`` is defined over those
+    pairs, so the grouping key has to identify the *file*, not just its basename.
+
+    The basename alone is not enough: two genuinely different images that share a
+    filename (across subtask directories, or nested layouts) collapsed into one
+    group, so a 2-question image was scored as a 4-question group and
+    ``accuracy_plus`` was computed over the wrong denominator. The full relative
+    path is used, and the ``question_id`` fallback keeps the grouping total when
+    no usable path is available.
     """
-    return f"{subtask}::{Path(image).name}"
+    text = str(image or "").strip()
+    if not text:
+        return f"{subtask}::qid:{question_id}"
+    # Normalise separators and strip a leading "./" so the same file referenced
+    # two ways yields one group.
+    normalised = Path(text).as_posix()
+    while normalised.startswith("./"):
+        normalised = normalised[2:]
+    if not normalised or normalised == ".":
+        return f"{subtask}::qid:{question_id}"
+    return f"{subtask}::{normalised}"

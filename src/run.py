@@ -55,6 +55,7 @@ from src.utils.config import (  # noqa: E402
     ConfigError,
     build_config,
     build_configs,
+    deep_update,
     resolve_configs,
     save_json,
     to_dict,
@@ -95,8 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--device", default="auto", help="auto | cuda | cuda:N | cpu")
     group.add_argument("--dtype", default="auto", help="auto | float32 | float16 | bfloat16")
     group.add_argument(
-        "--quantization", default="none", choices=["none", "4bit", "8bit"],
-        help="bitsandbytes quantization (requires a CUDA device).",
+        "--quantization", default=None, choices=["none", "4bit", "8bit"],
+        help="bitsandbytes quantization (requires a CUDA device). Default: none.",
     )
     group.add_argument(
         "--attn-implementation", default="eager",
@@ -154,17 +155,31 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--top-p", dest="top_p", type=float, default=None)
 
     group = parser.add_argument_group("evidence backends")
-    group.add_argument("--clip-model", dest="clip_model_name",
-                       default="openai/clip-vit-base-patch32",
-                       help="CLIP checkpoint for semantic evidence.")
-    group.add_argument("--grounding-backend", dest="grounding_backend", default="none",
-                       choices=["none", "hf_grounding_dino", "grounding_dino"],
-                       help="Region-evidence backend. 'none' disables region evidence.")
-    group.add_argument("--grounding-model", dest="grounding_model_id",
-                       default="IDEA-Research/grounding-dino-base")
-    group.add_argument("--grounding-device", dest="grounding_device", default="auto")
-    group.add_argument("--grounding-box-threshold", dest="grounding_box_threshold",
-                       type=float, default=0.3)
+    group.add_argument(
+        "--clip-model", dest="clip_model_name", default=None,
+        help="CLIP checkpoint for semantic evidence. Default: the value in the "
+             "YAML config, else openai/clip-vit-base-patch32.",
+    )
+    group.add_argument(
+        "--grounding-backend", dest="grounding_backend", default=None,
+        choices=["none", "hf_grounding_dino", "grounding_dino"],
+        help="Region-evidence backend. 'none' disables region evidence. "
+             "Default: the YAML config value, else none.",
+    )
+    group.add_argument(
+        "--grounding-model", dest="grounding_model_id", default=None,
+        help="Grounding detector checkpoint. Default: "
+             "IDEA-Research/grounding-dino-base.",
+    )
+    group.add_argument(
+        "--grounding-device", dest="grounding_device", default=None,
+        help="Device for the detector. Default: auto.",
+    )
+    group.add_argument(
+        "--grounding-box-threshold", dest="grounding_box_threshold",
+        type=float, default=None,
+        help="Minimum detection confidence. Default: 0.3.",
+    )
 
     group = parser.add_argument_group("output / reproducibility")
     group.add_argument("--output-dir", default=str(REPO_ROOT / "results"))
@@ -234,14 +249,35 @@ def build_experiment_configs(
 
     # One flat namespace: CLI flags override YAML, and every key must be
     # claimed by one of the config dataclasses (typos raise).
-    flat = {
-        **merged,
-        **decoding_overrides(args),
-        "backend": args.grounding_backend,
-        "model_id": args.grounding_model_id,
-        "box_threshold": args.grounding_box_threshold,
-        "device": args.grounding_device,
-    }
+    # ``deep_update`` (not a dict merge) is required here because unset CLI flags
+    # are None, and a plain ``{**merged, "backend": None}`` would write the None
+    # over the value the YAML just supplied, silently discarding the config file.
+    flat = deep_update(
+        merged,
+        {
+            **decoding_overrides(args),
+            "backend": args.grounding_backend,
+            "model_id": args.grounding_model_id,
+            "box_threshold": args.grounding_box_threshold,
+            "device": args.grounding_device,
+        },
+    )
+
+    # ``dtype`` and ``device`` exist on both GroundingConfig and LVLMConfig, but
+    # only the grounding ones are in the specs below -- so an unqualified
+    # ``dtype: float16`` in a YAML silently configured the *detector* while the
+    # LVLM kept its default. That is the reading nobody intends. Route the
+    # unqualified keys to the model, and give the detector explicitly prefixed
+    # aliases.
+    model_dtype = (
+        args.dtype if args.dtype != "auto" else flat.pop("dtype", None)
+    )
+    model_device = flat.pop("device", None)
+    flat["dtype"] = flat.pop("grounding_dtype", None)
+    if args.device != "auto":
+        model_device = args.device
+    flat["device"] = args.grounding_device or flat.get("device") or model_device
+
     built = build_configs(
         {
             "evidence": EvidenceConfig,
@@ -265,8 +301,8 @@ def build_experiment_configs(
         LVLMConfig,
         {
             "model_name": args.model,
-            "device": args.device,
-            "dtype": args.dtype,
+            "device": model_device or "auto",
+            "dtype": model_dtype or "auto",
             "attn_implementation": args.attn_implementation,
             "revision": args.revision,
             "cache_dir": args.cache_dir,
@@ -338,12 +374,34 @@ def precheck_dataset(args: argparse.Namespace) -> None:
         logger.info("MME subtasks discovered: %s", found)
 
 
-def run_pope(args: argparse.Namespace, decoder: VisualGuardDecoder) -> Dict[str, Any]:
+#: Benchmark token budgets. POPE answers are one word; MME allows a phrase.
+POPE_MAX_NEW_TOKENS = 16
+MME_MAX_NEW_TOKENS = 32
+
+
+def benchmark_budget(args: argparse.Namespace, benchmark: str) -> int:
+    """The token budget this benchmark imposes, CLI flag or benchmark default."""
+    if args.max_new_tokens:
+        return int(args.max_new_tokens)
+    return MME_MAX_NEW_TOKENS if benchmark == "mme" else POPE_MAX_NEW_TOKENS
+
+
+def run_pope(
+    args: argparse.Namespace,
+    decoder: VisualGuardDecoder,
+    configs: Dict[str, Any],
+) -> Dict[str, Any]:
     settings = [args.setting] if args.setting else list(POPE_SETTINGS)
+    # POPE answers are a single word, so the benchmark budget wins over whatever
+    # the YAML asked for. The resolved decoding config is updated to match, so
+    # provenance records the budget that actually ran rather than the one that
+    # was configured and then silently overridden by the evaluator.
+    budget = benchmark_budget(args, "pope")
+    configs["decoding"].max_new_tokens = budget
     evaluator = POPEEvaluator(
         generate_fn=decoder.generate,
         method=args.method,
-        max_new_tokens=args.max_new_tokens or 16,
+        max_new_tokens=budget,
     )
     output_dir = Path(args.output_dir)
     results = evaluate_pope_settings(
@@ -359,11 +417,17 @@ def run_pope(args: argparse.Namespace, decoder: VisualGuardDecoder) -> Dict[str,
     }
 
 
-def run_mme(args: argparse.Namespace, decoder: VisualGuardDecoder) -> Dict[str, Any]:
+def run_mme(
+    args: argparse.Namespace,
+    decoder: VisualGuardDecoder,
+    configs: Dict[str, Any],
+) -> Dict[str, Any]:
+    budget = benchmark_budget(args, "mme")
+    configs["decoding"].max_new_tokens = budget
     evaluator = MMEEvaluator(
         generate_fn=decoder.generate,
         method=args.method,
-        max_new_tokens=args.max_new_tokens or 32,
+        max_new_tokens=budget,
     )
     result = evaluator.evaluate(
         mme_root=Path(args.data_root),
@@ -446,9 +510,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         if args.benchmark == "pope":
-            payload = run_pope(args, decoder)
+            payload = run_pope(args, decoder, configs)
         else:
-            payload = run_mme(args, decoder)
+            payload = run_mme(args, decoder, configs)
     except (POPEDataError, MMEDataError) as exc:
         logger.error("Dataset problem: %s", exc)
         return 5
@@ -477,6 +541,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             extra={
                 "command": " ".join([Path(sys.argv[0]).name] + list(argv or sys.argv[1:])),
                 "method": args.method,
+                # Recorded so the results table can key rows on the *run*, not on
+                # the method. Several distinct ablations share a method name
+                # (attention+region and the lambda sweep are all "visualguard").
+                "run_name": run_name,
                 "model": configs["lvlm"].model_name,
                 "config_file": str(configs["yaml_path"]) if configs["yaml_path"] else None,
                 "max_samples": args.max_samples,

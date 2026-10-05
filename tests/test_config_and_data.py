@@ -20,6 +20,7 @@ from src.data.pope import POPEDataError, load_pope, resolve_image_path
 from src.model.grounding import (
     GroundingConfig,
     NullGroundingBackend,
+    build_grounding_backend,
     match_detection,
     normalise_phrase,
 )
@@ -481,12 +482,209 @@ def test_mme_missing_image_raises(tmp_path):
         load_mme(mme_root=tmp_path)
 
 
-def test_mme_rejects_unknown_answer(tmp_path):
+def test_mme_rejects_unknown_answer_at_load_time(tmp_path):
+    """A malformed answer must fail at load, not part-way through a run.
+
+    ``MMESample.ground_truth`` validates lazily, so a bad label used to surface
+    after the model had already run for however many samples preceded it. Load
+    now validates every answer, matching POPE's eager behaviour.
+    """
     _write_jsonl(
         tmp_path / "existence" / "existence.jsonl",
         [{"question_id": 0, "image": "a.jpg", "text": "q?", "answer": "perhaps"}],
     )
     _write_dummy_image(tmp_path / "existence" / "a.jpg")
-    samples = load_mme(mme_root=tmp_path)
     with pytest.raises(MMEDataError, match="Unrecognised MME answer"):
-        _ = samples[0].ground_truth
+        load_mme(mme_root=tmp_path)
+
+
+def test_mme_global_cap_is_an_actual_cap(tmp_path):
+    """``max_samples`` bounds the total, not just the number of subtasks read."""
+    for subtask in ("existence", "count"):
+        rows = [
+            {"question_id": i, "image": f"{i}.jpg", "text": "q?", "answer": "Yes"}
+            for i in range(50)
+        ]
+        _write_jsonl(tmp_path / subtask / f"{subtask}.jsonl", rows)
+        for i in range(50):
+            _write_dummy_image(tmp_path / subtask / f"{i}.jpg")
+
+    assert len(load_mme(mme_root=tmp_path, max_samples=5)) == 5
+    assert len(load_mme(mme_root=tmp_path, max_samples=60)) == 60
+    assert len(load_mme(mme_root=tmp_path, max_samples_per_subtask=7)) == 14
+
+
+def test_mme_prefers_the_named_subtask_jsonl(tmp_path):
+    """``count/count.jsonl`` wins over any other .jsonl in the directory."""
+    directory = tmp_path / "count"
+    _write_jsonl(
+        directory / "aaa_notes.jsonl",
+        [{"question_id": 0, "image": "wrong.jpg", "text": "q?", "answer": "No"}],
+    )
+    _write_jsonl(
+        directory / "count.jsonl",
+        [{"question_id": 1, "image": "right.jpg", "text": "q?", "answer": "Yes"}],
+    )
+    _write_dummy_image(directory / "wrong.jpg")
+    _write_dummy_image(directory / "right.jpg")
+
+    samples = load_mme(mme_root=tmp_path)
+    assert [s.image_path.name for s in samples] == ["right.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# CLI / YAML precedence
+# ---------------------------------------------------------------------------
+#
+# argparse defaults used to be concrete values rather than None, so they always
+# overrode the YAML config: `--config region` resolved backend="none" and
+# clip_model_name from the command line even though the file set neither.
+
+
+def _resolve(argv):
+    from src.run import build_experiment_configs, build_parser
+
+    return build_experiment_configs(build_parser().parse_args(argv))
+
+
+def test_cli_defaults_do_not_clobber_yaml(tmp_path):
+    cfg_yaml = tmp_path / "region.yaml"
+    cfg_yaml.write_text(
+        "alpha: 0.0\nbeta: 0.0\ngamma: 1.0\n"
+        "clip_model_name: openai/clip-vit-large-patch14\n"
+        "backend: hf_grounding_dino\nbox_threshold: 0.55\n",
+        encoding="utf-8",
+    )
+    configs = _resolve([
+        "--config", str(cfg_yaml), "--method", "visualguard",
+        "--data-root", str(tmp_path),
+    ])
+
+    assert configs["evidence"].gamma == 1.0
+    assert configs["evidence"].clip_model_name == "openai/clip-vit-large-patch14", (
+        "an argparse default overrode the YAML clip model"
+    )
+    assert configs["grounding"].backend == "hf_grounding_dino"
+    assert configs["grounding"].box_threshold == pytest.approx(0.55)
+
+
+def test_explicit_cli_still_overrides_yaml(tmp_path):
+    cfg_yaml = tmp_path / "vg.yaml"
+    cfg_yaml.write_text("gamma: 1.0\nbackend: hf_grounding_dino\n", encoding="utf-8")
+    configs = _resolve([
+        "--config", str(cfg_yaml), "--data-root", str(tmp_path),
+        "--gamma", "0.0", "--grounding-backend", "none",
+    ])
+    assert configs["evidence"].gamma == 0.0
+    assert configs["grounding"].backend == "none"
+
+
+def test_repo_configs_grounding_is_none_by_default():
+    """The shipped configs must not silently request a detector download."""
+    from src.run import CONFIG_DIR
+
+    for path in sorted(CONFIG_DIR.glob("*.yaml")):
+        resolved = resolve_configs(path)
+        backend = resolved.get("backend")
+        assert backend in (None, "none"), (
+            f"{path.name} requests grounding backend {backend!r}; region "
+            "evidence must be opt-in"
+        )
+
+
+# ---------------------------------------------------------------------------
+# grounding backend selection
+# ---------------------------------------------------------------------------
+
+
+def test_grounding_none_is_respected_even_when_gamma_is_positive():
+    """``backend="none"`` must stay off; the decoder must not force-enable DINO.
+
+    The decoder used to upgrade a disabled backend to ``hf_grounding_dino``
+    whenever ``gamma > 0``, which both contradicted ``--grounding-backend none``
+    and made the run fail outright on a machine without the detector.
+    """
+    backend = build_grounding_backend(GroundingConfig(backend="none"))
+    assert isinstance(backend, NullGroundingBackend)
+    assert not backend.available
+
+
+def test_decoder_does_not_force_enable_grounding_when_disabled():
+    import torch
+
+    from src.model.visual_guard_decoder import VisualGuardDecoder
+
+    class _NoWeightsBackend:
+        """Minimal stand-in; the point is that no detector gets constructed."""
+
+        device = torch.device("cpu")
+        model = None
+        tokenizer = None
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1),
+        # gamma=0: this run genuinely does not use region evidence, so there is
+        # nothing for the decoder to force-enable.
+        evidence_config=EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.0),
+        grounding_config=GroundingConfig(backend="none"),
+        method="visualguard",
+    )
+    dec.backend = _NoWeightsBackend()
+    dec.load_evidence()
+
+    assert isinstance(dec._grounding_backend, NullGroundingBackend), (
+        "the decoder silently swapped in a real detector"
+    )
+
+
+def test_gamma_without_a_grounding_backend_is_rejected():
+    """A region-weighted run with no detector must not silently become greedy.
+
+    With ``gamma > 0`` and ``backend="none"`` every candidate scored the same
+    VES, so the penalty could never re-order anything and the run was
+    indistinguishable from unmodified greedy while reporting a region ablation.
+    """
+    import pytest
+    import torch
+
+    from src.model.visual_guard_decoder import VisualGuardDecoder
+
+    class _NoWeightsBackend:
+        device = torch.device("cpu")
+        model = None
+        tokenizer = None
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1),
+        evidence_config=EvidenceConfig(alpha=0.0, beta=0.0, gamma=1.0),
+        grounding_config=GroundingConfig(backend="none"),
+        method="region",
+    )
+    dec.backend = _NoWeightsBackend()
+
+    with pytest.raises(ValueError, match="grounding-backend"):
+        dec.load_evidence()
+
+
+def test_gamma_with_a_grounding_backend_is_accepted():
+    import torch
+
+    from src.model.visual_guard_decoder import VisualGuardDecoder
+
+    class _StubBackend:
+        device = torch.device("cpu")
+        model = None
+        tokenizer = None
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=1),
+        evidence_config=EvidenceConfig(alpha=0.0, beta=0.0, gamma=1.0),
+        grounding_config=GroundingConfig(backend="hf_grounding_dino"),
+        method="region",
+    )
+    dec.backend = _StubBackend()
+    dec.evidence_config = EvidenceConfig(alpha=0.0, beta=0.0, gamma=1.0)
+    dec._validate_evidence_reachable()  # must not raise

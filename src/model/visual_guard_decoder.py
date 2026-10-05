@@ -33,10 +33,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import torch
 
+from ..utils.config import accepts_keyword
 from .grounding import GroundingConfig, GroundingBackend, build_grounding_backend
 from .llava_backend import LVLMBackend, LVLMConfig, build_backend
 from .visual_evidence import (
@@ -80,7 +81,6 @@ class DecodingConfig:
     temperature: float = 1.0
     top_p: float = 1.0
     repetition_penalty: float = 1.0
-    early_stop_on_newline: bool = False
 
 
 @dataclass
@@ -148,7 +148,6 @@ def make_candidates(
     tokenizer: Any,
     generated_ids: Sequence[int],
     top_k: int,
-    score: bool = True,
 ) -> List[Candidate]:
     """Build a candidate set from a logit row.
 
@@ -242,14 +241,21 @@ class VisualGuardDecoder:
     ) -> None:
         self.lvlm_config = lvlm_config
         self.decoding_config = decoding_config or DecodingConfig()
-        self.evidence_config = evidence_config or EvidenceConfig()
+        self._base_evidence_config = evidence_config or EvidenceConfig()
+        #: Current (possibly ablation-adjusted) weights. Derived from the base on
+        #: every :meth:`set_method` so switching methods is idempotent.
+        self.evidence_config = self._base_evidence_config
         self.grounding_config = grounding_config or GroundingConfig()
         self.method = method
 
         self.backend: Optional[LVLMBackend] = None
         self.scorer: Optional[VisualEvidenceScorer] = None
-        self._clip_cache: Dict[str, float] = {}
         self._grounding_backend: Optional[GroundingBackend] = None
+        #: Cheap fingerprint of the image the bound features were computed from.
+        #: Compared by value, not by ``is``: ``prepare_inputs`` allocates a fresh
+        #: tensor per sample, so an identity check never hits and re-ran the
+        #: vision tower for every image.
+        self._bound_image_key: Optional[Any] = None
 
     # -- lifecycle ----------------------------------------------------
 
@@ -263,71 +269,124 @@ class VisualGuardDecoder:
             self.scorer = None
             return
 
-        grounding_cfg = self.grounding_config
-        if self.evidence_config.gamma > 0 and grounding_cfg.backend == "none":
-            # gamma requested but no backend configured -> make the intent explicit
-            grounding_cfg = GroundingConfig(
-                backend="hf_grounding_dino",
-                model_id=grounding_cfg.model_id,
-                box_threshold=grounding_cfg.box_threshold,
-                text_threshold=grounding_cfg.text_threshold,
-                device=grounding_cfg.device,
-                cache=grounding_cfg.cache,
-            )
-        self._grounding_backend = build_grounding_backend(grounding_cfg)
+        self.load_evidence()
 
-        device = self.backend.device
-        semantic = SemanticEvidence(self.evidence_config, device=device)
-        self.scorer = VisualEvidenceScorer(
-            config=self.evidence_config,
-            backend=self.backend,
-            grounding=self._grounding_backend,
-            semantic=semantic,
-        )
-        self._bind_embeddings()
+    def _bind_embeddings(self, pixel_values: Optional[torch.Tensor] = None) -> None:
+        """Expose LM-space embeddings for candidate-level attention evidence.
 
-    def _bind_embeddings(self) -> None:
-        """Expose LM-space embeddings for candidate-level attention evidence."""
+        Both halves are required for the channel to rank candidates:
+
+        * ``input_embeddings``      -- the LM's token-embedding matrix, so a
+          candidate token id can be turned into a vector.
+        * ``image_token_embeddings`` -- the projected visual features the model
+          actually sees, obtained from ``get_image_features``.
+
+        Binding only the first leaves ``candidate_embed_cos`` returning ``None``
+        (channel unavailable), which silently reduces the whole attention channel
+        to a no-op. ``pixel_values`` may be supplied here, or later via
+        :meth:`ensure_image_bindings` once the image for the current sample is
+        known.
+        """
         if self.scorer is None or self.backend is None:
             return
-        model = getattr(self.backend, "model", None)
-        if model is None:
+        # Both accessors are optional: ``LVLMBackend`` is an interface other
+        # backends may implement partially, and a backend without them simply
+        # cannot supply candidate-level attention evidence.
+        token_embeddings = _optional_call(self.backend, "token_embedding_matrix")
+        image_embeddings = (
+            _optional_call(self.backend, "image_token_embeddings", pixel_values)
+            if pixel_values is not None
+            else None
+        )
+        if token_embeddings is None:
+            logger.debug("Backend exposes no token embedding matrix; "
+                         "candidate-level attention evidence unavailable.")
+        self.scorer.bind_embeddings(
+            input_embeddings=token_embeddings,
+            image_token_embeddings=image_embeddings,
+        )
+
+    def ensure_image_bindings(
+        self, pixel_values: Optional[torch.Tensor], image_key: Optional[Any] = None
+    ) -> None:
+        """Bind image features for the current sample, once per distinct image.
+
+        Projected visual features depend only on the image, so this is cached and
+        recomputed only when the image actually changes.
+
+        ``image_key`` should identify the source image (its path, say). It is
+        compared by value because the pixel tensor itself is freshly allocated
+        per sample and so cannot be compared by identity; without it we fall back
+        to a cheap content fingerprint of the tensor.
+        """
+        if self.scorer is None:
             return
-        try:
-            base = getattr(model, "model", model)
-            embed = getattr(getattr(base, "language_model", base), "embed_tokens", None)
-            if embed is not None:
-                self.scorer.bind_embeddings(
-                    input_embeddings=embed.weight.data, image_token_embeddings=None
-                )
-        except Exception as exc:  # pragma: no cover
-            logger.debug("Could not bind token embeddings: %s", exc)
+        key = image_key if image_key is not None else _tensor_fingerprint(pixel_values)
+        if pixel_values is None:
+            # Clear the *bindings*, not just the cache key. Returning early with
+            # the key cleared left the previous sample's projected features in
+            # the scorer, so a sample without an image was scored against the
+            # prior image.
+            if self._bound_image_key is not None:
+                self._bound_image_key = None
+                self._bind_embeddings(None)
+            return
+        if key is not None and key == self._bound_image_key:
+            return
+        self._bound_image_key = key
+        self._bind_embeddings(pixel_values)
 
     def set_method(self, method: str) -> None:
         """Switch method. Backend is reused; evidence channels are re-derived."""
         if method not in ALL_METHODS:
             raise ValueError(f"Unknown method {method!r}. Valid: {sorted(ALL_METHODS)}")
-        if method in BASELINE_METHODS and self.method not in BASELINE_METHODS:
+        if method in BASELINE_METHODS:
+            if self.scorer is not None:
+                self._close_grounding()
             self.scorer = None
-        elif method not in BASELINE_METHODS:
+        else:
             self.method = method
-            self.evidence_config = evidence_config_for_method(method, self.evidence_config)
+            # Derive from the *pristine* config, not the current one. Assigning
+            # the ablated config back to ``self.evidence_config`` made this
+            # non-idempotent: set_method("attention") followed by
+            # set_method("visualguard") returned the attention-only weights,
+            # permanently losing beta and gamma.
+            self.evidence_config = evidence_config_for_method(
+                method, self._base_evidence_config
+            )
             self.load_evidence()
         self.method = method
 
+    def _close_grounding(self) -> None:
+        """Release the grounding backend, if one is loaded."""
+        if self._grounding_backend is not None:
+            try:
+                self._grounding_backend.close()
+            except Exception as exc:  # pragma: no cover - backend specific
+                logger.debug("grounding backend close failed: %s", exc)
+        self._grounding_backend = None
+
     def load_evidence(self) -> None:
-        """(Re)initialise evidence backends for the current method."""
+        """(Re)initialise evidence backends for the current method.
+
+        The grounding backend is taken exactly as configured. In particular
+        ``backend="none"`` means "region evidence is off", even when
+        ``gamma > 0``: the channel then contributes the neutral value and the
+        scorer records ``region_evidence_disabled``, so the run cannot be
+        mistaken for a region-grounded one. Silently force-enabling a detector the
+        user disabled would instead make the run fail on machines without it.
+
+        A region-only method with no backend is rejected outright -- see
+        :meth:`_validate_evidence_reachable`.
+        """
         if self.backend is None:
             raise RuntimeError("Call load() before load_evidence()")
-        grounding_cfg = self.grounding_config
-        if self.evidence_config.gamma > 0 and grounding_cfg.backend == "none":
-            grounding_cfg = GroundingConfig(
-                backend="hf_grounding_dino",
-                model_id=grounding_cfg.model_id,
-                device=grounding_cfg.device,
-                cache=grounding_cfg.cache,
-            )
-        self._grounding_backend = build_grounding_backend(grounding_cfg)
+        self._validate_evidence_reachable()
+        # Drop the previous backend before building a new one; overwriting the
+        # field leaked a loaded detector (and its pinned cache) on every
+        # set_method.
+        self._close_grounding()
+        self._grounding_backend = build_grounding_backend(self.grounding_config)
         semantic = SemanticEvidence(self.evidence_config, device=self.backend.device)
         self.scorer = VisualEvidenceScorer(
             config=self.evidence_config,
@@ -335,23 +394,108 @@ class VisualGuardDecoder:
             grounding=self._grounding_backend,
             semantic=semantic,
         )
+        self._bound_image_key = None
         self._bind_embeddings()
-        self._clip_cache.clear()
+
+    def _validate_evidence_reachable(self) -> None:
+        """Reject configurations whose active channels cannot be measured.
+
+        Without this, ``--method region`` with the default ``backend="none"``
+        produced a run indistinguishable from unmodified greedy: every candidate
+        scored the same VES, so the penalty never re-ordered anything and the
+        run reported a region-evidence ablation that had measured no regions.
+        Failing here is the honest outcome.
+        """
+        cfg = self.evidence_config
+        if self.grounding_config.backend == "none":
+            active = [n for n, w in (("alpha", cfg.alpha), ("beta", cfg.beta),
+                                     ("gamma", cfg.gamma)) if w > 0]
+            unreachable = [n for n in active if n == "gamma"]
+            if unreachable:
+                raise ValueError(
+                    f"method {self.method!r} has gamma={cfg.gamma} but "
+                    "--grounding-backend is 'none', so region evidence cannot be "
+                    "measured and the run would be identical to greedy decoding. "
+                    "Pass --grounding-backend hf_grounding_dino, or set --gamma 0 "
+                    "for a run that genuinely does not use region evidence."
+                )
 
     # -- generation ---------------------------------------------------
 
-    def generate(self, image: Any, question: str, method: Optional[str] = None) -> GenerationResult:
-        """Generate an answer to ``question`` about ``image`` using ``method``."""
+    def generate(
+        self,
+        image: Any,
+        question: str,
+        method: Optional[str] = None,
+        max_new_tokens: Optional[int] = None,
+    ) -> GenerationResult:
+        """Generate an answer to ``question`` about ``image`` using ``method``.
+
+        ``max_new_tokens`` overrides :class:`DecodingConfig` for this call. The
+        evaluators rely on it: POPE answers are a single word, so the benchmark's
+        budget (16) must actually reach the decoding loop rather than being
+        stored on the evaluator and ignored.
+        """
         if self.backend is None:
             raise RuntimeError("Decoder not loaded; call load() first.")
         method = method or self.method
-        if method in BASELINE_METHODS:
-            return self._generate_baseline(image, question, method)
-        return self._generate_visualguard(image, question, method)
+        if method not in ALL_METHODS:
+            raise ValueError(f"Unknown method {method!r}. Valid: {sorted(ALL_METHODS)}")
+
+        # Applying the requested method's ablation here, not only in
+        # set_method()/run.py. Without it, generate(..., method="attention") on a
+        # visualguard decoder ran all three channels while reporting the result
+        # as "attention" -- a mislabelled row in the ablation table.
+        previous_weights = self.evidence_config
+        previous_scorer = self.scorer
+        if method not in BASELINE_METHODS:
+            requested = evidence_config_for_method(method, self._base_evidence_config)
+            if requested != previous_weights or self.scorer is None:
+                self.evidence_config = requested
+                try:
+                    self.load_evidence()
+                except Exception:
+                    self.evidence_config = previous_weights
+                    raise
+        elif self.scorer is not None:
+            self._close_grounding()
+            self.scorer = None
+
+        # The token budget is passed down explicitly instead of being written
+        # into the shared DecodingConfig. Mutating it for the duration of the
+        # call was not reentrant: two overlapping calls each captured the
+        # other's value and the last restore won, permanently corrupting the
+        # config for every later sample.
+        budget = (
+            int(max_new_tokens)
+            if max_new_tokens is not None
+            else self.decoding_config.max_new_tokens
+        )
+        try:
+            if method in BASELINE_METHODS:
+                return self._generate_baseline(image, question, method, budget)
+            return self._generate_visualguard(
+                image, question, method, budget, self.evidence_config
+            )
+        finally:
+            if previous_scorer is not self.scorer and method not in BASELINE_METHODS:
+                self.evidence_config = previous_weights
+                self.scorer = previous_scorer
+                self._bound_image_key = None
+                self._bind_embeddings()
+            elif method in BASELINE_METHODS and self.scorer is None:
+                self.scorer = previous_scorer
+                self.evidence_config = previous_weights
 
     # -- baselines ----------------------------------------------------
 
-    def _generate_baseline(self, image: Any, question: str, method: str) -> GenerationResult:
+    def _generate_baseline(
+        self,
+        image: Any,
+        question: str,
+        method: str,
+        max_new_tokens: Optional[int] = None,
+    ) -> GenerationResult:
         """Unmodified decoding via ``model.generate``.
 
         Deliberately uses the HF generate path so the baselines are the
@@ -367,7 +511,11 @@ class VisualGuardDecoder:
         pixel_values = inputs.get("pixel_values")
 
         kwargs: Dict[str, Any] = dict(
-            max_new_tokens=self.decoding_config.max_new_tokens,
+            max_new_tokens=(
+                self.decoding_config.max_new_tokens
+                if max_new_tokens is None
+                else max_new_tokens
+            ),
             pixel_values=pixel_values,
             repetition_penalty=self.decoding_config.repetition_penalty,
             pad_token_id=self.backend.tokenizer.pad_token_id,
@@ -410,28 +558,66 @@ class VisualGuardDecoder:
 
     # -- visualguard --------------------------------------------------
 
-    def _generate_visualguard(self, image: Any, question: str, method: str) -> GenerationResult:
+    def _generate_visualguard(
+        self,
+        image: Any,
+        question: str,
+        method: str,
+        max_new_tokens: Optional[int] = None,
+        evidence_config: Optional[EvidenceConfig] = None,
+    ) -> GenerationResult:
         """Manual autoregressive loop with logit modification."""
         assert self.backend is not None and self.scorer is not None
         tokenizer = self.backend.tokenizer
+        cfg = evidence_config or self.evidence_config
 
         enc = self.backend.prepare_inputs(question, image)
         input_ids = enc["input_ids"]
         pixel_values = enc.get("pixel_values")
+        attention_mask = enc.get("attention_mask")
 
         self.scorer.semantic.reset_image()
-        self._clip_cache.clear()
+        # Drop the previous image's detections and detector cache. Without this,
+        # any path that skipped re-preparation scored candidates against the
+        # *previous* sample's boxes -- and since RegionEvidence.score() takes no
+        # image argument, nothing downstream could notice.
+        self.scorer.region.reset()
+        reset_grounding_cache(self._grounding_backend)
+
+        notes: List[str] = []
+
+        # Projected visual features for this image. Without them the
+        # candidate-level half of the attention channel cannot rank candidates.
+        self.ensure_image_bindings(pixel_values, image_key=_image_identity(image))
+        if cfg.alpha > 0 and not self.scorer.candidate_embeddings_available:
+            notes.append(
+                "image_token_embeddings unavailable: AttentionEvidence is "
+                "state-level only and cannot rank candidates"
+            )
+
+        # Region evidence is prepared once per image, from the question's content
+        # words, so the detector is not re-run on every decoding step.
+        if cfg.gamma > 0 and self.scorer.region.available:
+            self.scorer.region.prepare_for_image(image, question)
 
         eos_ids = self._eos_token_ids()
         generated: List[int] = []
         interventions = 0
         details: List[Dict[str, Any]] = []
-        notes: List[str] = []
 
         start = time.perf_counter()
-        step = self.backend.initial_step(input_ids, pixel_values, output_attentions=True)
+        step = _call_step(
+            self.backend.initial_step,
+            input_ids,
+            pixel_values,
+            output_attentions=True,
+            attention_mask=attention_mask,
+        )
+        # The image-token span is fixed by the prompt and stays valid for the
+        # whole generation: cached steps only append to the key/value axis.
+        image_span = step.image_token_span
         state_attn = self.scorer.attention.state_image_attention(
-            step.attentions, step.image_token_span
+            step.attentions, image_span
         )
         if step.attentions is None:
             notes.append(
@@ -440,7 +626,12 @@ class VisualGuardDecoder:
             )
         past = step.past_key_values
 
-        for _ in range(self.decoding_config.max_new_tokens):
+        budget = (
+            self.decoding_config.max_new_tokens
+            if max_new_tokens is None
+            else max_new_tokens
+        )
+        for _ in range(budget):
             candidates = make_candidates(
                 step.logits, tokenizer, generated, self.decoding_config.top_k
             )
@@ -467,15 +658,36 @@ class VisualGuardDecoder:
             if chosen.token_id in eos_ids:
                 break
 
-            step = self.backend.next_step(
+            step_attention_mask = _extend_attention_mask(attention_mask, past, self.backend)
+            step = _call_step(
+                self.backend.next_step,
                 torch.tensor([[chosen.token_id]], device=self.backend.device),
                 past,
                 output_attentions=True,
+                attention_mask=step_attention_mask,
             )
             past = step.past_key_values
-            state_attn = self.scorer.attention.state_image_attention(
-                step.attentions, None
-            ) or state_attn
+            # Re-read attention against the *same* image-token span. Passing
+            # ``None`` here would silently return 0.0 and freeze the state-level
+            # signal at its prefill value, which is what turns the feedback loop
+            # into a constant.
+            #
+            step_attn = self.scorer.attention.state_image_attention(
+                step.attentions, image_span
+            )
+            # Adopt any value the call produced, including a genuine 0.0.
+            # Gating the adoption on ``step_attn > 0.0`` (to tell "no data" from
+            # "no mass") meant a later step could never *reduce* the signal, only
+            # replace it with another positive one -- reintroducing a weaker
+            # version of the very freeze this re-read exists to prevent. "No
+            # data" is ``attentions is None``, which returns 0.0 above and is
+            # reported as a note rather than silently treated as a measurement.
+            state_attn = step_attn
+            if step.attentions is None:
+                notes.append(
+                    "attention unavailable on a cached decode step; "
+                    "image_attention for that step is 0.0 (not measured)"
+                )
 
         latency = time.perf_counter() - start
         text = tokenizer.decode(generated, skip_special_tokens=True)
@@ -516,6 +728,111 @@ class VisualGuardDecoder:
                 ids.update(int(v) for v in value)
         extra = getattr(tok, "additional_special_tokens_ids", None)
         return ids or {tok.eos_token_id}
+
+
+def _call_step(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Call a backend step, dropping optional keywords it does not accept.
+
+    ``attention_mask`` is an optional capability: a backend or a test double that
+    predates it must keep working. Decided by signature, never by catching
+    ``TypeError`` -- see :func:`src.utils.config.accepts_keyword`.
+    """
+    if "attention_mask" in kwargs and not accepts_keyword(fn, "attention_mask"):
+        kwargs = {k: v for k, v in kwargs.items() if k != "attention_mask"}
+    return fn(*args, **kwargs)
+
+
+def _extend_attention_mask(
+    attention_mask: Optional[torch.Tensor],
+    past: Any,
+    backend: LVLMBackend,
+) -> Optional[torch.Tensor]:
+    """Grow a prefill ``attention_mask`` by one column per decoded token.
+
+    A cached forward pass needs a mask covering the whole sequence, cache
+    included. Only relevant once prompts are padded; with batch size 1 and no
+    padding the mask is all ones and this is a no-op passthrough.
+    """
+    if attention_mask is None:
+        return None
+    try:
+        cached = past.get_seq_length() if hasattr(past, "get_seq_length") else None
+        if not cached:
+            return attention_mask
+        ones = torch.ones(
+            (attention_mask.shape[0], 1),
+            dtype=attention_mask.dtype,
+            device=attention_mask.device,
+        )
+        return torch.cat([attention_mask, ones], dim=-1)
+    except Exception as exc:  # pragma: no cover - cache backend specific
+        logger.debug("could not extend attention_mask: %s", exc)
+        return attention_mask
+
+
+def _image_identity(image: Any) -> Optional[Any]:
+    """Cheap comparable identity for the *source* image.
+
+    Path-like inputs identify themselves exactly, which both avoids re-running
+    the vision tower for a repeated image and keeps the binding correct when two
+    samples share a path. For in-memory images there is no stable cheap key, so
+    ``None`` is returned and the caller falls back to a tensor fingerprint.
+    """
+    if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
+        return ("path", str(image))
+    return None
+
+
+def reset_grounding_cache(backend: Optional[GroundingBackend]) -> None:
+    """Clear a grounding backend's per-image cache, if it has one.
+
+    The detector is now run once per image with a question-derived vocabulary, so
+    its cache almost never hits -- but it retains the images it anchored and
+    would serve detections for an identical (image, phrase) pair across samples.
+    Resetting at the sample boundary keeps the cache's scope explicit.
+    """
+    reset = getattr(backend, "reset", None)
+    if callable(reset):
+        reset()
+
+
+def _tensor_fingerprint(tensor: Optional[torch.Tensor]) -> Optional[Any]:
+    """Cheap value-based identity for a pixel tensor, for cache comparison.
+
+    ``prepare_inputs`` allocates a fresh tensor per sample, so comparing
+    ``pixel_values is self._bound_pixel_values`` never hit and the vision tower
+    was re-run for every image. Hashing the raw bytes would be exact but costs a
+    full pass over the data, so this uses shape, dtype and a small deterministic
+    sample of values -- enough to distinguish different images, cheap enough to
+    do every step.
+    """
+    if tensor is None:
+        return None
+    with torch.no_grad():
+        flat = tensor.detach().reshape(-1)
+        n = flat.numel()
+        if n == 0:
+            return (tuple(tensor.shape), str(tensor.dtype))
+        # Sample at most 64 evenly spaced positions.
+        idx = torch.linspace(0, n - 1, steps=min(64, n), dtype=torch.long)
+        sample = flat[idx].to(torch.float32).tolist()
+        return (tuple(tensor.shape), str(tensor.dtype), tuple(sample))
+
+
+def _optional_call(obj: Any, name: str, *args: Any) -> Any:
+    """Call ``obj.name(*args)`` if it exists, else return ``None``.
+
+    Keeps optional backend capabilities optional instead of turning a partially
+    implemented backend into an ``AttributeError``.
+    """
+    fn = getattr(obj, name, None)
+    if not callable(fn):
+        return None
+    try:
+        return fn(*args)
+    except Exception as exc:  # pragma: no cover - backend specific
+        logger.debug("backend.%s failed: %s", name, exc)
+        return None
 
 
 def _runner_up(candidates: Sequence[Candidate], chosen: Candidate) -> Dict[str, Any]:

@@ -32,18 +32,41 @@ would emit it) is supported by the image, along three complementary channels:
 
 Combined score (the visual evidence score for candidate ``t``)::
 
-    VES(t) = alpha * AttentionEvidence(t)
-           + beta  * SemanticEvidence(t)
-           + gamma * RegionEvidence(t)
+    VES(t) = [ alpha * AttentionEvidence(t)
+             + beta  * SemanticEvidence(t)
+             + gamma * RegionEvidence(t) ] / (alpha + beta + gamma)
 
-All components are mapped into ``[0, 1]`` before combination, so alpha/beta/
-gamma are directly interpretable as weights. Hallucination pressure follows
-from insufficient support::
+A weighted *mean* over the active channels, not a weighted sum: every channel
+is in ``[0, 1]`` and the denominator is restricted to the channels that are
+both weighted and available, so ``VES`` stays in ``[0, 1]`` however many
+channels are enabled and a single-channel ablation is directly comparable to
+the full method.
 
-    penalty(t) = lambda * (1 - VES(t))_+   applied as  logit_t -= penalty(t)
+All components are mapped into ``[0, 1]`` before combination. Each channel is
+normalised *within the candidate set* (min-max by default), so the channels
+share a scale; ``VES`` is therefore a within-step *ranking*, and ``threshold``
+is a percentile over the top-k rather than an absolute grounding level. This is
+recorded as a limitation rather than hidden: it means ``threshold`` selects the
+weakest fraction of candidates, not "everything below a fixed amount of image
+support".
 
-Every public entry point is pure w.r.t. its inputs and testable with small
-synthetic tensors; no benchmark code depends on this module's randomness.
+A channel that could not be measured contributes :data:`NEUTRAL_EVIDENCE`
+(``0.5``) rather than ``0.0`` or ``1.0``. This distinction is load-bearing: a
+constant fed through the min-max normaliser is a degenerate range and would map
+to maximum support, disabling the penalty for a channel that measured nothing.
+
+Hallucination pressure follows from insufficient support::
+
+    penalty(t) = lambda * max(0, threshold - VES(t)) / threshold
+                 applied as  logit_t -= penalty(t)
+
+The evidence scorer's low-level helpers are pure and unit-testable with small
+synthetic tensors. The scorer itself is *not* pure: it caches image features,
+detections and LM embeddings per sample, and it writes ``ves``/``penalty`` onto
+the ``Candidate`` objects it is given. Callers driving it in a loop are
+responsible for calling :meth:`SemanticEvidence.reset_image`,
+:meth:`RegionEvidence.reset` and the grounding backend's ``reset`` at sample
+boundaries.
 """
 
 from __future__ import annotations
@@ -60,10 +83,21 @@ from .grounding import (
     GroundingBackend,
     NullGroundingBackend,
     build_grounding_backend,
+    is_token_subsequence,
     match_detection,
+    normalise_phrase,
 )
 
 EPS = 1e-8
+
+#: Evidence value assigned to a channel that could not be measured.
+#:
+#: One constant for every channel, so "unavailable" never masquerades as
+#: evidence. It matters that this is *not* run through the min-max normaliser:
+#: a constant input is a degenerate range and maps to all-``1.0``, which would
+#: turn "unmeasured" into "maximally supported" and silently disable the
+#: penalty.
+NEUTRAL_EVIDENCE = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +150,8 @@ class EvidenceConfig:
 
     clip_model_name: str = "openai/clip-vit-base-patch32"
     clip_device: Optional[str] = None
-    clip_max_batch: int = 64
 
-    penalise_function_words: bool = True
+    penalise_function_words: bool = False
 
     def __post_init__(self) -> None:
         if self.head_aggregation not in {"mean", "max", "median"}:
@@ -147,18 +180,21 @@ class EvidenceConfig:
 
 
 def minmax_normalise(values: Sequence[float]) -> List[float]:
-    """Map ``values`` into ``[0, 1]``; degenerate range maps to all-ones.
+    """Map ``values`` into ``[0, 1]``; degenerate range maps to neutral.
 
-    An all-equal candidate set carries no discriminative information, so we
-    return 1.0 rather than 0.0: returning 0.0 would penalise every candidate
-    equally and destroy the ranking, which is the opposite of the intent.
+    An all-equal candidate set carries no discriminative information. It is
+    mapped to :data:`NEUTRAL_EVIDENCE` (``0.5``) rather than to ``1.0``: a
+    constant input is a zero-span range, so returning ``1.0`` would report
+    *maximum* evidence for a set that measured nothing, and the thresholded
+    penalty would then never fire. ``0.5`` is equally rank-preserving — every
+    candidate still ties — but does not fabricate support.
     """
     if not values:
         return []
     lo = min(values)
     hi = max(values)
     if math.isclose(hi, lo, rel_tol=1e-9, abs_tol=1e-12):
-        return [1.0 for _ in values]
+        return [NEUTRAL_EVIDENCE for _ in values]
     span = hi - lo
     return [(v - lo) / span for v in values]
 
@@ -178,21 +214,6 @@ def zscore_normalise(values: Sequence[float]) -> List[float]:
     var = sum((v - mean) ** 2 for v in values) / (n - 1)
     std = math.sqrt(max(var, EPS))
     return [1.0 / (1.0 + math.exp(-(v - mean) / (std + EPS))) for v in values]
-
-
-def softmax_normalise(logits: Sequence[float], temperature: float = 1.0) -> List[float]:
-    """Numerically stable softmax over a candidate set.
-
-    Subtracting the max guarantees at least one ``exp`` term equals 1.0, so no
-    epsilon is needed in the denominator and the outputs sum to exactly 1.0.
-    """
-    if not logits:
-        return []
-    t = max(temperature, EPS)
-    m = max(logits)
-    exps = [math.exp((v - m) / t) for v in logits]
-    total = sum(exps)
-    return [e / total for e in exps]
 
 
 def normalise_values(values: Sequence[float], how: str) -> List[float]:
@@ -226,8 +247,8 @@ def combine_evidence(
     """Compute ``VES(t)`` for each candidate.
 
     Channels with zero weight are ignored, and the result is divided by the
-    sum of the active weights so ``VES`` stays in ``[0, 1]`` regardless of how
-    many channels are switched on.
+    sum of the *active* weights so ``VES`` stays in ``[0, 1]`` regardless of
+    how many channels are switched on.
     """
     n = len(attention)
     if n == 0:
@@ -235,7 +256,18 @@ def combine_evidence(
     if not (len(semantic) == n and len(region) == n):
         raise ValueError("evidence channels must have equal length")
 
-    total = config.total_weight
+    # Divide by the weights of the channels that are actually *available*, not
+    # by every configured weight. A disabled channel still contributed to the
+    # denominator, which deflated VES by a constant factor (0.5/2.5 = 20% for
+    # visualguard defaults with grounding off) and so inflated the penalty for
+    # every token while making the reported ``chosen_ves`` meaningless.
+    total = 0.0
+    if config.alpha > 0:
+        total += config.alpha
+    if config.beta > 0:
+        total += config.beta
+    if config.gamma > 0:
+        total += config.gamma
     if total <= 0:
         raise ValueError(
             "at least one of alpha/beta/gamma must be > 0; "
@@ -297,6 +329,58 @@ def is_content_bearing(text: str) -> bool:
     if not stripped or _PUNCT_RE.match(stripped):
         return False
     return stripped.lower() not in FUNCTION_WORDS
+
+
+#: Question scaffolding that is never a visual object, on top of FUNCTION_WORDS.
+#:
+#: Covers three sources of noise, all of which otherwise reach the open-vocabulary
+#: detector as if they named a thing to look for:
+#:
+#: * POPE's template tail, "Please answer this question with one word." — the
+#:   number words included, so ``one`` is not treated as an object.
+#: * MME's template tail, "Answer the question using a single word or phrase."
+#: * interrogatives, which are the question's grammar rather than its subject
+#:   ("What number of people are there?").
+QUESTION_NOISE = frozenset(
+    """
+    image images picture pictures photo photos photograph photographs
+    shown show shows showing there here this that these those
+    any some please answer answering question questions word words single
+    phrase phrases one two three four five six seven eight nine ten
+    first second third
+    what which who whom whose where when why how
+    look looks looking tell telling describe describing following
+    using use name names type types based many much total
+    """.split()
+)
+
+
+def content_words(text: str, limit: int = 16) -> List[str]:
+    """Content words of ``text``, de-duplicated, order preserved.
+
+    Used to fix the grounding vocabulary for an image from the question alone,
+    so the detector runs once per image instead of once per decoding step.
+
+    ``limit`` exists only as a runaway guard. It defaults high enough that a
+    templated benchmark question fits inside it, because truncating the tail
+    would drop the actual object noun and leave the region channel unable to
+    distinguish a correct answer from a hallucination.
+    """
+    out: List[str] = []
+    seen = set()
+    for raw in re.split(r"[^\w'-]+", text or ""):
+        token = raw.strip("'-").lower()
+        if not token or token in FUNCTION_WORDS or token in QUESTION_NOISE:
+            continue
+        if len(token) < 2 or token.isdigit():
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+        if len(out) >= limit:
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -429,13 +513,20 @@ class AttentionEvidence:
         image_token_embeddings: Optional[torch.Tensor],
         token_embeddings: Optional[torch.Tensor],
         candidate_token_ids: Sequence[int],
-    ) -> List[float]:
+    ) -> Optional[List[float]]:
         """Cosine similarity of candidate embeddings vs the image embedding.
 
         Args:
             image_token_embeddings: ``(n_image, d)`` LM-space image embeddings.
             token_embeddings: ``(vocab, d)`` input-embedding matrix.
             candidate_token_ids: Candidate token ids.
+
+        Returns
+        -------
+        Optional[List[float]]
+            One value per candidate, or ``None`` when the inputs needed to rank
+            candidates are absent. ``None`` is returned rather than a constant
+            list because a constant is not neutral downstream — see below.
         """
         n = len(candidate_token_ids)
         if (
@@ -444,7 +535,12 @@ class AttentionEvidence:
             or token_embeddings is None
             or image_token_embeddings.numel() == 0
         ):
-            return [0.5] * n
+            # ``None``, not ``[0.5] * n``. The difference is load-bearing: a
+            # constant list fed to the min-max normaliser is a degenerate range,
+            # which maps to all-``1.0`` (maximum evidence). Returning a constant
+            # here therefore inverted the fallback into "maximally supported".
+            # The caller must handle ``None`` as "channel unavailable".
+            return None
         img_vec = F.normalize(image_token_embeddings.float().mean(dim=0), dim=-1)
         cand = F.normalize(token_embeddings.float()[list(candidate_token_ids)], dim=-1)
         sims = cand @ img_vec
@@ -551,12 +647,29 @@ class SemanticEvidence:
 
 
 class RegionEvidence:
-    """Region/object grounding channel."""
+    """Region/object grounding channel.
+
+    The detector is run once per image against a phrase vocabulary fixed
+    *before* generation starts (by default the content words of the question),
+    rather than once per decoding step. Running it per step is what makes
+    region evidence impractical: an open-vocabulary detector is orders of
+    magnitude slower than an LM forward pass, and the phrase set changes every
+    step, so nothing would ever hit the cache.
+
+    Because the vocabulary is fixed up front, a candidate phrase outside it
+    carries no information: :meth:`score` returns ``0.0`` for it explicitly,
+    without consulting the detections. That is a deliberate, recorded
+    limitation — without the membership test the answer would instead depend on
+    whether a detector happened to label a box with that word, which for
+    caption-labelling backends is every box.
+    """
 
     def __init__(self, config: EvidenceConfig, backend: Optional[GroundingBackend] = None) -> None:
         self.config = config
         self.backend: GroundingBackend = backend or NullGroundingBackend()
         self._detections: Optional[List[Any]] = None
+        self._vocabulary: Tuple[str, ...] = ()
+        self._prepared_image: Any = None
 
     @property
     def available(self) -> bool:
@@ -566,15 +679,79 @@ class RegionEvidence:
         """Run the detector once for a batch of phrases on one image."""
         if not self.backend.available:
             self._detections = None
+            self._vocabulary = ()
+            self._prepared_image = None
             return
+        vocabulary = sorted(
+            {normalise_phrase(p) for p in phrases if p and p.strip()}
+        )
         self._detections = self.backend.detect(image, list(phrases))
+        self._vocabulary = tuple(vocabulary)
+        self._prepared_image = image
+
+    def prepare_for_image(self, image: Any, question: str) -> None:
+        """Prepare detections for ``image`` using the question's content words.
+
+        For a question such as "Is there a dog in the image?" the vocabulary is
+        ``{"dog"}`` — ``image`` is question scaffolding and is filtered out — so
+        the detector is asked exactly the object the question is about and
+        candidate tokens are matched against that.
+        """
+        self.prepare(image, content_words(question))
+
+    def reset(self) -> None:
+        """Forget the current image's detections (call between samples)."""
+        self._detections = None
+        self._vocabulary = ()
+        self._prepared_image = None
 
     def score(self, phrase: str) -> float:
         """Best detector confidence supporting ``phrase`` (already in [0, 1])."""
         if self._detections is None:
             return 0.0
+        if not self.in_vocabulary(phrase):
+            # The detector was never asked about this phrase, so a match would be
+            # accidental rather than evidence.
+            return 0.0
         score, _ = match_detection(self._detections, phrase)
         return float(min(max(score, 0.0), 1.0))
+
+    def in_vocabulary(self, phrase: str) -> bool:
+        """Whether the detector was actually asked about ``phrase``."""
+        target = normalise_phrase(phrase)
+        if not target:
+            return False
+        if target in self._vocabulary:
+            return True
+        # Accept whole-token containment so a multi-word candidate built from
+        # several vocabulary phrases ("brown dog" from {"brown", "dog"}) counts.
+        target_tokens = target.split()
+        return any(
+            is_token_subsequence(target_tokens, v.split())
+            for v in self._vocabulary
+            if v
+        )
+
+    @property
+    def vocabulary(self) -> Tuple[str, ...]:
+        """Phrases the current detections were produced for."""
+        return self._vocabulary
+
+    @property
+    def prepared(self) -> bool:
+        """Whether the detector ran for the current image.
+
+        Requires both loaded detections *and* a non-empty vocabulary: preparing
+        an empty phrase list produces an empty (but not ``None``) detection
+        list, which used to read as "prepared" and so suppressed the
+        "not prepared" diagnostic while contributing nothing.
+        """
+        return self._detections is not None and bool(self._vocabulary)
+
+    @property
+    def has_detections(self) -> bool:
+        """Whether the prepared detection list is non-empty."""
+        return bool(self._detections)
 
     @property
     def reason(self) -> Optional[str]:
@@ -637,9 +814,24 @@ class VisualEvidenceScorer:
         input_embeddings: Optional[torch.Tensor],
         image_token_embeddings: Optional[torch.Tensor],
     ) -> None:
-        """Provide LM-space embeddings for candidate-level attention evidence."""
+        """Provide LM-space embeddings for candidate-level attention evidence.
+
+        Both arguments are needed. Binding only ``input_embeddings`` leaves
+        :meth:`AttentionEvidence.candidate_embed_cos` returning a constant,
+        which makes ``attention_candidate_mix`` meaningless and reduces the
+        whole attention channel to a per-step constant.
+        """
         self._input_embeddings = input_embeddings
         self._embeddings_cache = image_token_embeddings
+
+    @property
+    def candidate_embeddings_available(self) -> bool:
+        """Whether the candidate-level attention component can be computed."""
+        return (
+            self._embeddings_cache is not None
+            and self._embeddings_cache.numel() > 0
+            and self._input_embeddings is not None
+        )
 
     # -- main entry point --------------------------------------------
 
@@ -666,13 +858,19 @@ class VisualEvidenceScorer:
 
         # 1) Attention evidence ------------------------------------------------
         w = self.config.attention_candidate_mix
-        state_attn = (
-            state_image_attention
-            if state_image_attention is not None
-            else getattr(self.backend, "last_image_attention", 0.0)
-            if self.backend is not None
-            else 0.0
-        )
+        if state_image_attention is None:
+            # No measured value supplied. Report "unmeasured" rather than probing
+            # a ``last_image_attention`` attribute: no backend defines one, so
+            # that fallback always silently yielded 0.0 while looking like a
+            # measurement.
+            if w > 0:
+                notes.append(
+                    "attention_evidence_state_unavailable: no state-level image "
+                    "attention was supplied for this step"
+                )
+            state_attn = 0.0
+        else:
+            state_attn = float(state_image_attention)
         state_attn = float(min(max(state_attn, 0.0), 1.0))
         bundle.state_image_attention = state_attn
 
@@ -681,9 +879,30 @@ class VisualEvidenceScorer:
             self._input_embeddings,
             [c.token_id for c in candidates],
         )
-        attn_raw = [(1.0 - w) * state_attn + w * a for a in cand_attn]
-        attention_ev = normalise_values(attn_raw, self.config.normalize)
-        bundle.attention_source = "image_attention+embed_cos" if w > 0 else "image_attention"
+        if cand_attn is None:
+            # The candidate-level component is unavailable. Build a constant
+            # channel and short-circuit the normalisation: running a constant
+            # through min-max yields all-``1.0`` (degenerate range), which would
+            # report *maximum* evidence for a channel that measured nothing.
+            # ``0.5`` is the honest neutral: every candidate is equally
+            # unknown, so the penalty cannot re-rank them, and VES is not
+            # inflated into "fully supported".
+            if w > 0:
+                notes.append(
+                    "attention_evidence_candidate_unavailable: image_token_embeddings "
+                    "are not bound, so AttentionEvidence is state-level only and "
+                    "cannot rank candidates; every candidate scores the neutral 0.5"
+                )
+            attention_ev = [NEUTRAL_EVIDENCE] * n
+            bundle.attention_source = (
+                "image_attention(state-level only)" if w > 0 else "image_attention"
+            )
+        else:
+            attn_raw = [(1.0 - w) * state_attn + w * a for a in cand_attn]
+            attention_ev = normalise_values(attn_raw, self.config.normalize)
+            bundle.attention_source = (
+                "image_attention+embed_cos" if w > 0 else "image_attention"
+            )
 
         # 2) Semantic evidence -------------------------------------------------
         if self.config.beta > 0:
@@ -691,20 +910,45 @@ class VisualEvidenceScorer:
                 semantic_ev = self.semantic.score(image, [c.text for c in candidates])
             except Exception as exc:  # pragma: no cover - defensive
                 notes.append(f"semantic_evidence_unavailable: {exc}")
-                semantic_ev = [0.5] * n
+                semantic_ev = [NEUTRAL_EVIDENCE] * n
         else:
-            semantic_ev = [0.5] * n
+            semantic_ev = [NEUTRAL_EVIDENCE] * n
 
         # 3) Region evidence ---------------------------------------------------
         if self.config.gamma > 0 and self.region.available:
-            self.region.prepare(image, [c.text for c in candidates])
-            region_ev = [self.region.score(c.text) for c in candidates]
+            # Detections are prepared once per image (see RegionEvidence); the
+            # candidates are only *matched* against them here.
+            if not self.region.prepared:
+                notes.append(
+                    "region_evidence_not_prepared: no detections for this image; "
+                    f"region evidence contributes the neutral {NEUTRAL_EVIDENCE}"
+                )
+                region_ev = [NEUTRAL_EVIDENCE] * n
+            else:
+                raw_region = [self.region.score(c.text) for c in candidates]
+                if not self.region.has_detections:
+                    # The detector ran and found nothing. That is a measurement,
+                    # but an empty one: every candidate ties at zero, so
+                    # normalising it would report maximum support.
+                    notes.append(
+                        "region_evidence_empty: the detector returned no boxes for "
+                        f"this image; region evidence contributes {NEUTRAL_EVIDENCE} "
+                        "uniformly and cannot rank candidates"
+                    )
+                    region_ev = [NEUTRAL_EVIDENCE] * n
+                else:
+                    # Normalised within the candidate set, like the other two
+                    # channels. Raw detector confidences are on a different
+                    # scale from min-maxed CLIP scores and attention, so summing
+                    # them unnormalised made region a constant deflator rather
+                    # than evidence.
+                    region_ev = normalise_values(raw_region, self.config.normalize)
         else:
             if self.config.gamma > 0:
                 notes.append(
                     f"region_evidence_disabled: {self.region.reason or 'backend unavailable'}"
                 )
-            region_ev = [0.0] * n
+            region_ev = [NEUTRAL_EVIDENCE] * n
         bundle.grounding_reason = self.region.reason
 
         # 4) Combine -----------------------------------------------------------

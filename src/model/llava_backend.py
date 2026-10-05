@@ -50,6 +50,39 @@ class LVLMBackendError(RuntimeError):
     """Raised for backend loading / inference failures."""
 
 
+def _as_feature_tensor(features: Any) -> Optional[torch.Tensor]:
+    """Reduce multimodal feature output to a single ``(n_features, d)`` tensor.
+
+    Depending on the ``transformers`` version, ``get_image_features`` returns a
+    bare tensor, a tuple, or a model-output object. Flattening to 2-D here keeps
+    the caller independent of that.
+    """
+    if features is None:
+        return None
+    if torch.is_tensor(features):
+        tensor = features
+    else:
+        tensor = None
+        for attr in ("last_hidden_state", "image_embeds", "pooler_output", "hidden_states"):
+            value = getattr(features, attr, None)
+            if torch.is_tensor(value):
+                tensor = value
+                break
+        if tensor is None and isinstance(features, (tuple, list)):
+            for value in features:
+                if torch.is_tensor(value):
+                    tensor = value
+                    break
+        if tensor is None:
+            return None
+    if tensor.dim() == 3:
+        # (batch, n_features, d) -> (n_features, d)
+        tensor = tensor[0]
+    if tensor.dim() != 2 or tensor.numel() == 0:
+        return None
+    return tensor.detach().float()
+
+
 @dataclass
 class LVLMConfig:
     """Configuration for loading a pretrained LVLM.
@@ -134,8 +167,16 @@ class LVLMBackend(ABC):
         input_ids: torch.Tensor,
         pixel_values: Optional[torch.Tensor],
         output_attentions: bool = False,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> StepOutput:
-        """Run the prefill step for a full prompt."""
+        """Run the prefill step for a full prompt.
+
+        ``attention_mask`` is accepted so this path can be driven identically to
+        the baseline's ``model.generate``, which is passed the mask. With batch
+        size 1 and no padding it makes no difference, but the asymmetry would
+        silently diverge the moment padding is introduced -- and two rows of an
+        ablation table must decode under identical conditions.
+        """
 
     @abstractmethod
     def next_step(
@@ -143,8 +184,13 @@ class LVLMBackend(ABC):
         input_ids: torch.Tensor,
         past_key_values: Any,
         output_attentions: bool = False,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> StepOutput:
-        """Run one cached step given the previously selected token."""
+        """Run one cached step given the previously selected token.
+
+        ``attention_mask`` must span the full sequence including the cache when
+        supplied; see :meth:`initial_step`.
+        """
 
     @property
     @abstractmethod
@@ -176,14 +222,25 @@ class LVLMBackend(ABC):
             while end < len(ids) and ids[end] == sentinel:
                 end += 1
             return (start, end)
-        # No placeholder found: the processor may splice image features in
-        # directly. Fall back to the standard LLaVA convention of a leading
-        # image block, using the configured image sequence length.
-        if int(pixel_values.shape[0]) == 0:
-            return None
-        model_cfg = getattr(self.model, "config", None)
-        n_image = getattr(model_cfg, "image_seq_length", None) or 1
-        return (0, min(int(n_image), len(ids)))
+
+        # No placeholder found. The image block's position is then genuinely
+        # unknown, and guessing it is worse than admitting it: the previous
+        # guess assumed the block started at index 0, but LLaVA prompts start
+        # "USER: " so the block actually begins at 3. That returned a span
+        # covering three text tokens plus n_image-3 image tokens, quietly
+        # corrupting both the numerator and the denominator of the
+        # state-level attention signal with no warning.
+        #
+        # Returning None makes AttentionEvidence report that it could not be
+        # measured, which is the honest outcome. Backends that know their own
+        # layout should override this.
+        logger.warning(
+            "image-token placeholder %s not found in the prompt, so the image "
+            "span is unknown; AttentionEvidence cannot use image attention for "
+            "this sample. This backend should override image_token_span().",
+            sentinel,
+        )
+        return None
 
 
 class LLaVAHFBackend(LVLMBackend):
@@ -616,14 +673,18 @@ class LLaVAHFBackend(LVLMBackend):
         input_ids: torch.Tensor,
         pixel_values: Optional[torch.Tensor],
         output_attentions: bool = False,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> StepOutput:
         if self.model is None:
             raise LVLMBackendError("Backend not loaded; call load() first.")
         span = self.image_token_span(input_ids, pixel_values)
+        kwargs: Dict[str, Any] = {"pixel_values": pixel_values}
+        if attention_mask is not None:
+            kwargs["attention_mask"] = attention_mask
         out = self._forward(
             input_ids=input_ids,
-            pixel_values=pixel_values,
             output_attentions=output_attentions,
+            **kwargs,
         )
         out.image_token_span = span
         return out
@@ -633,14 +694,94 @@ class LLaVAHFBackend(LVLMBackend):
         input_ids: torch.Tensor,
         past_key_values: Any,
         output_attentions: bool = False,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> StepOutput:
         if self.model is None:
             raise LVLMBackendError("Backend not loaded; call load() first.")
+        kwargs: Dict[str, Any] = {"past_key_values": past_key_values}
+        if attention_mask is not None:
+            kwargs["attention_mask"] = attention_mask
         return self._forward(
             input_ids=input_ids,
-            past_key_values=past_key_values,
             output_attentions=output_attentions,
+            **kwargs,
         )
+
+    # ------------------------------------------------------------------
+    # embeddings for candidate-level attention evidence
+    # ------------------------------------------------------------------
+
+    def image_token_embeddings(self, pixel_values: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """Projected visual features in the LM's hidden space, ``(n_patches, d)``.
+
+        ``get_image_features`` returns vision-tower output *after* the
+        multi-modal projector, i.e. in exactly the space ``embed_tokens.weight``
+        lives in. That is what makes the comparison in
+        :meth:`~src.model.visual_evidence.AttentionEvidence.candidate_embed_cos`
+        meaningful: a candidate token's embedding is compared against the
+        projected image features the model actually sees.
+
+        Without these, the candidate-level half of the attention channel
+        degenerates to a constant and the channel cannot rank candidates at all.
+        """
+        if self.model is None or pixel_values is None:
+            return None
+        getter = getattr(self.model, "get_image_features", None)
+        if not callable(getter):
+            return None
+        try:
+            with torch.no_grad():
+                feats = getter(pixel_values=pixel_values)
+        except Exception as exc:  # pragma: no cover - checkpoint specific
+            logger.warning("get_image_features failed (%s); candidate-level "
+                           "attention evidence will be unavailable.", exc)
+            return None
+        return _as_feature_tensor(feats)
+
+    def token_embedding_matrix(self) -> Optional[torch.Tensor]:
+        """The LM input-embedding matrix, ``(vocab, d)``, in a dense float dtype.
+
+        Under ``--quantization 4bit``/``8bit`` the ``weight`` attribute is a
+        ``Params4bit``/``Params8bit`` whose ``.data`` is *packed uint8 storage*.
+        Indexing that by token id yields garbage rather than embeddings, so the
+        cosines computed against it were meaningless while still being reported
+        as available. Dequantise it, and refuse rather than return nonsense.
+        """
+        base = getattr(self.model, "model", self.model)
+        lm = getattr(base, "language_model", base)
+        embed = getattr(lm, "embed_tokens", None)
+        weight = getattr(embed, "weight", None)
+        if weight is None:
+            return None
+        if not torch.is_tensor(weight):
+            # bitsandbytes quantised parameter: dequantize() gives real weights.
+            dequantize = getattr(weight, "dequantize", None)
+            if not callable(dequantize):
+                logger.warning(
+                    "token embedding matrix is a %s with no dequantize(); "
+                    "candidate-level attention evidence is unavailable.",
+                    type(weight).__name__,
+                )
+                return None
+            try:
+                weight = dequantize()
+            except Exception as exc:  # pragma: no cover - device specific
+                logger.warning(
+                    "dequantizing the token embedding matrix failed (%s); "
+                    "candidate-level attention evidence is unavailable.", exc,
+                )
+                return None
+        data = weight.data if hasattr(weight, "data") else weight
+        if not torch.is_tensor(data) or data.numel() == 0:
+            return None
+        if not data.is_floating_point():
+            logger.warning(
+                "token embedding matrix has non-float dtype %s; candidate-level "
+                "attention evidence is unavailable rather than computed on "
+                "packed storage.", data.dtype,
+            )
+            return None
+        return data
 
 
 def build_backend(config: LVLMConfig) -> LVLMBackend:

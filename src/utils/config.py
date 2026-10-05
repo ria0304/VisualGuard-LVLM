@@ -14,10 +14,11 @@ Merge precedence (lowest to highest)::
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Type, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Type, TypeVar
 
 T = TypeVar("T")
 
@@ -75,6 +76,42 @@ def deep_update(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str, 
     return result
 
 
+def accepts_keyword(fn: Callable[..., Any], name: str) -> bool:
+    """Whether ``fn`` accepts the keyword argument ``name``.
+
+    Decides once, from the signature, whether an injected callable supports an
+    optional keyword. Two places need this, and neither may use the obvious
+    shortcut of calling the function and catching ``TypeError``:
+
+    * the evaluators, which pass ``max_new_tokens`` to a decoder that may not
+      accept it, and
+    * the decoder, which passes ``attention_mask`` to a backend that may not
+      accept it.
+
+    ``TypeError`` is what a real forward pass raises for ordinary problems (a bad
+    image type, a dtype mismatch, an error from inside the model). Catching it
+    here re-ran the whole sample a second time at the wrong settings and threw
+    the real error away.
+
+    Introspection failures (``functools.partial`` edges, C extensions, mocks)
+    answer ``False``: the keyword is then simply not passed, which is the safe
+    direction.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    for param in params.values():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == name and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
+
+
 def filter_known(cls: Type[T], values: Mapping[str, Any]) -> Dict[str, Any]:
     """Keep only keys that are actual fields of dataclass ``cls``.
 
@@ -120,19 +157,40 @@ def build_configs(
     ``ConfigError`` is raised listing the offending keys. This is what lets a
     single ``configs/*.yaml`` file cover evidence, decoding and grounding
     settings while still catching genuine typos.
+
+    A key claimed by *more than one* dataclass is ambiguous and also raises.
+    Both ``EvidenceConfig``'s sibling ``GroundingConfig`` and the model config
+    have a ``dtype`` field, so a YAML ``dtype: float16`` silently bound to
+    whichever class happened to be claimed first -- meaning a user could ask for
+    fp16 on the LVLM, get it applied to the *detector*, and see the model
+    quietly stay on its default. Silently picking a winner is worse than
+    refusing: the user has no way to notice. ``build_config`` (singular) remains
+    available where the target class is already known and unambiguous.
     """
-    claimed: set = set()
-    for cls in specs.values():
+    claimed: Dict[str, List[str]] = {}
+    for name, cls in specs.items():
         if not is_dataclass(cls):
             raise ConfigError(f"{cls} is not a dataclass")
-        claimed.update(f.name for f in fields(cls))
+        for f in fields(cls):
+            claimed.setdefault(f.name, []).append(name)
 
     provided = {k for k, v in values.items() if v is not None}
-    unknown = sorted(provided - claimed)
+    unknown = sorted(provided - set(claimed))
     if unknown:
         raise ConfigError(
             f"Unknown config keys: {unknown}. "
             f"Recognised keys across {sorted(specs)}: {sorted(claimed)}"
+        )
+    ambiguous = sorted(
+        key for key in provided
+        if key in claimed and len(claimed[key]) > 1
+    )
+    if ambiguous:
+        details = {k: sorted(claimed[k]) for k in ambiguous}
+        raise ConfigError(
+            f"Ambiguous config keys claimed by more than one config class: {details}. "
+            "Set these explicitly per class rather than in the shared flat "
+            "namespace, or build that class with build_config()."
         )
     return {name: build_config(cls, values) for name, cls in specs.items()}
 

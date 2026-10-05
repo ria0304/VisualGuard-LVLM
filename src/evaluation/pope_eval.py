@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..data.pope import POPEDataError, POEPSample, load_pope
-from .metrics import BinaryMetrics, confusion_counts, extract_verdict, pope_metrics
+from .metrics import (
+    BinaryMetrics,
+    accepts_keyword,
+    confusion_counts,
+    extract_verdict,
+    pope_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,13 +141,27 @@ class POPEEvaluator:
         self.method = method
         self.prompt_template = prompt_template
         self.max_new_tokens = max_new_tokens
+        # Decided once, from the signature. Probing this by calling the
+        # function and catching TypeError also catches genuine runtime errors
+        # raised inside the decoder, and silently re-runs the sample at the
+        # wrong token budget.
+        self._generate_takes_budget = accepts_keyword(generate_fn, "max_new_tokens")
 
     # -- single sample -------------------------------------------------
 
     def _predict(self, sample: POEPSample) -> POPERecord:
         question = self.prompt_template.format(question=sample.question)
         started = time.perf_counter()
-        out = self.generate_fn(sample.image_path, question)
+        # The benchmark's token budget is passed through to the decoder; without this
+        # the decoder falls back to its own (much larger) default. Whether the
+        # override is supported is known from the signature, not from catching
+        # TypeError around the call.
+        if self._generate_takes_budget:
+            out = self.generate_fn(
+                sample.image_path, question, max_new_tokens=self.max_new_tokens
+            )
+        else:
+            out = self.generate_fn(sample.image_path, question)
         latency = time.perf_counter() - started
 
         raw = getattr(out, "text", str(out))
@@ -243,12 +263,26 @@ class POPEEvaluator:
                 f"{m.unparseable} answers could not be parsed as yes/no "
                 "and were scored as errors"
             )
-        if m.yes_ratio > 0.95:
+        if not self._generate_takes_budget:
+            notes.append(
+                f"generate_fn does not accept max_new_tokens, so the benchmark's "
+                f"{self.max_new_tokens}-token budget was NOT applied; the "
+                "decoder's own default was used instead"
+            )
+        # The yes/no ratios are over parseable answers only, so a high value here
+        # really is yes-tilting rather than a parse failure rate.
+        if m.parseable == 0:
+            notes.append(
+                "no answer could be parsed as yes/no; yes_ratio and "
+                "hallucination_rate are 0 because nothing was parseable, not "
+                "because the model behaved correctly"
+            )
+        elif m.yes_ratio > 0.95:
             notes.append(
                 f"yes_ratio={m.yes_ratio:.3f}: the model answers 'yes' almost "
                 "always, which inflates recall and deflates precision"
             )
-        if m.yes_ratio < 0.05:
+        elif m.yes_ratio < 0.05:
             notes.append(
                 f"yes_ratio={m.yes_ratio:.3f}: the model answers 'no' almost "
                 "always; a strongly conservative decoding rule can cause this"

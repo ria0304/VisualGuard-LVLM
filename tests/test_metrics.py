@@ -134,15 +134,51 @@ def test_all_yes_is_detectable_via_yes_ratio():
 def test_unparseable_counted_as_error_and_surfaced():
     m = confusion_counts([None, False], [True, False])
     assert m.unparseable == 1
-    assert m.fn == 1  # missed a "yes"
+    # Counted in total (so accuracy is penalised) but kept out of the
+    # confusion matrix: an unparseable answer asserts nothing.
+    assert m.fn == 0
+    assert m.fp == 0
     assert m.tn == 1
     assert m.total == 2
+    assert m.parseable == 1
+    assert m.accuracy == pytest.approx(0.5)
 
 
-def test_unparseable_negative_counted_as_false_positive():
-    m = confusion_counts([None], [False])
+def test_unparseable_is_not_scored_as_hallucination():
+    """Garbage output must not be reported as a 100% hallucination rate."""
+    m = confusion_counts([None] * 10, [False] * 10)
+    assert m.unparseable == 10
+    assert m.hallucination_rate == pytest.approx(0.0)
+    # Nor as the model answering "yes" to everything.
+    assert m.yes_ratio == pytest.approx(0.0)
+    # It still counts as entirely incorrect.
+    assert m.accuracy == pytest.approx(0.0)
+
+
+def test_yes_and_no_ratios_use_parseable_denominator():
+    m = confusion_counts([True, False, None, None], [True, False, True, False])
+    assert m.unparseable == 2
+    assert m.yes_ratio == pytest.approx(0.5)
+    assert m.no_ratio == pytest.approx(0.5)
+    assert m.yes_ratio + m.no_ratio == pytest.approx(1.0)
+
+
+def test_fpr_is_zero_when_there_are_no_negative_items():
+    """No "no" items means no false positives, not a hallucination rate of 1."""
+    m = confusion_counts([True, True], [True, True])
+    assert m.fpr == pytest.approx(0.0)
+    assert m.specificity == pytest.approx(0.0)
+    assert m.hallucination_rate == pytest.approx(0.0)
+    assert not m.has_negatives
+    assert m.has_positives
+
+
+def test_fpr_counts_false_positives_over_negatives():
+    m = confusion_counts([True, True, False, False], [True, False, True, False])
+    # Of the two "no" items, one was wrongly answered "yes".
     assert m.fp == 1
-    assert m.unparseable == 1
+    assert m.fpr == pytest.approx(0.5)
+    assert m.hallucination_rate == pytest.approx(0.5)
 
 
 def test_length_mismatch_rejected():
@@ -202,10 +238,11 @@ def _records():
 
 
 def test_mme_subtask_score_formula():
+    """``score = 100 * (accuracy + accuracy_plus)``, so a subtask maxes at 200."""
     out = mme_subtask_scores(_records())
     assert out["existence/accuracy"] == pytest.approx(50.0)
     assert out["existence/accuracy_plus"] == pytest.approx(50.0)
-    assert out["existence/score"] == pytest.approx(50.0)
+    assert out["existence/score"] == pytest.approx(100.0)
     assert out["existence/n_images"] == 2
 
 
@@ -234,19 +271,19 @@ def test_accuracy_plus_all_correct():
     out = mme_subtask_scores(records)
     assert out["existence/accuracy"] == pytest.approx(100.0)
     assert out["existence/accuracy_plus"] == pytest.approx(100.0)
-    assert out["existence/score"] == pytest.approx(100.0)
+    assert out["existence/score"] == pytest.approx(200.0)
 
 
-def test_mme_perfect_subtask_caps_at_200():
+def test_mme_perfect_subtask_reaches_200():
     records = [
         {"image_id": f"sub::{i}.jpg", "correct": True, "subtask": "count"}
         for i in range(3)
         for _ in range(2)
     ]
     out = mme_subtask_scores(records)
-    assert out["count/score"] == pytest.approx(100.0)
+    assert out["count/score"] == pytest.approx(200.0)
     totals = mme_category_totals(out)
-    assert totals["perception_score"] == pytest.approx(100.0)
+    assert totals["perception_score"] == pytest.approx(200.0)
 
 
 def test_mme_category_totals_sum_present_subtasks():
@@ -274,3 +311,62 @@ def test_mme_refuses_empty_records():
 def test_mme_rejects_incomplete_records():
     with pytest.raises(ValueError, match="missing required key"):
         mme_subtask_scores([{"image_id": "a", "correct": True}])
+
+
+# ---------------------------------------------------------------------------
+# MME accuracy is per-question, not macro-over-images
+# ---------------------------------------------------------------------------
+
+
+def test_mme_accuracy_counts_questions_not_images():
+    """A truncated run must still follow the official per-question definition.
+
+    Macro-averaging the per-image accuracies gave image A (1 of 2 correct) and
+    image B (0 of 1) equal weight, reporting 50% where the official protocol
+    gives 1/3.
+    """
+    scores = mme_subtask_scores([
+        {"image_id": "A", "correct": True, "subtask": "existence"},
+        {"image_id": "A", "correct": False, "subtask": "existence"},
+        {"image_id": "B", "correct": False, "subtask": "existence"},
+    ])
+    assert scores["existence/n_images"] == 2
+    assert scores["existence/n_questions"] == 3
+    assert scores["existence/accuracy"] == pytest.approx(100.0 / 3.0)
+    assert scores["existence/accuracy_plus"] == pytest.approx(0.0)
+
+
+def test_mme_accuracy_plus_is_still_per_image():
+    scores = mme_subtask_scores([
+        {"image_id": "A", "correct": True, "subtask": "existence"},
+        {"image_id": "A", "correct": True, "subtask": "existence"},
+        {"image_id": "B", "correct": False, "subtask": "existence"},
+        {"image_id": "B", "correct": False, "subtask": "existence"},
+    ])
+    assert scores["existence/accuracy"] == pytest.approx(50.0)
+    assert scores["existence/accuracy_plus"] == pytest.approx(50.0)
+    assert scores["existence/score"] == pytest.approx(100.0)
+
+
+def test_mme_untouched_images_reach_a_perfect_score():
+    scores = mme_subtask_scores([
+        {"image_id": "A", "correct": True, "subtask": "existence"},
+        {"image_id": "A", "correct": True, "subtask": "existence"},
+    ])
+    assert scores["existence/score"] == pytest.approx(200.0)
+
+
+# ---------------------------------------------------------------------------
+# not-measured must be distinguishable from scored-zero
+# ---------------------------------------------------------------------------
+
+
+def test_mme_totals_report_how_many_subtasks_were_measured():
+    """A run where nothing ran and a run where everything failed must differ."""
+    nothing_ran = mme_category_totals({})
+    everything_failed = mme_category_totals({"existence/score": 0.0})
+    assert nothing_ran["total_score"] == pytest.approx(0.0)
+    assert everything_failed["total_score"] == pytest.approx(0.0)
+    # Same total, but the measured-subtask count separates the two cases.
+    assert nothing_ran["perception_subtasks_measured"] == 0
+    assert everything_failed["perception_subtasks_measured"] == 1

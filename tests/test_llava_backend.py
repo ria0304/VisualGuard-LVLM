@@ -67,18 +67,43 @@ def test_span_is_none_without_pixel_values():
     assert backend.image_token_span(torch.tensor([[1, 32000]]), None) is None
 
 
-def test_span_falls_back_to_image_seq_length_without_placeholder():
-    """Some processors splice features in directly; use the configured length."""
+def test_span_is_unknown_without_a_placeholder():
+    """No placeholder means the block's position is unknown -- do not guess.
+
+    The old fallback assumed the image block started at index 0. LLaVA prompts
+    begin ``"USER: "``, so it actually starts at 3: the guess returned a span
+    covering three text tokens plus n_image-3 image tokens, quietly corrupting
+    the attention signal with no warning. Reporting "unknown" is the honest
+    answer, and it makes AttentionEvidence say the signal was unmeasured rather
+    than measuring the wrong tokens.
+    """
     backend = _backend(image_seq_length=576)
     ids = torch.tensor([[7, 8, 9, 10]])
+    assert backend.image_token_span(ids, torch.zeros(1, 3, 4, 4)) is None
+
+
+def test_span_of_a_real_llava_prompt_starts_after_the_role_prefix():
+    """A LLaVA-1.5 prompt's image block starts at 3, not 0."""
+    backend = _backend(image_seq_length=576)
+    # "USER: " -> 3 text tokens, then the expanded image block, then "ASSISTANT:".
+    ids = torch.tensor([[450, 525, 29941] + [32000] * 576 + [2, 29941]])
     span = backend.image_token_span(ids, torch.zeros(1, 3, 4, 4))
-    assert span == (0, 4)  # clamped to the actual sequence length
+    assert span == (3, 3 + 576)
 
 
-def test_span_respects_configured_length_when_sequence_is_longer():
-    backend = _backend(image_seq_length=10)
-    ids = torch.arange(1, 21).unsqueeze(0)
-    assert backend.image_token_span(ids, torch.zeros(1, 3, 4, 4)) == (0, 10)
+def test_unknown_span_disables_the_state_attention_signal():
+    """An unknown span must yield "unmeasured", not a number from the wrong span."""
+    from src.model.visual_evidence import AttentionEvidence, EvidenceConfig
+
+    backend = _backend(image_seq_length=576)
+    ids = torch.tensor([[450, 525, 29941] + [32000] * 576 + [2, 29941]])
+    span = backend.image_token_span(ids, torch.zeros(1, 3, 4, 4))
+    attentions = (torch.rand(1, 2, ids.shape[1], ids.shape[1]),)
+    ev = AttentionEvidence(EvidenceConfig())
+    # With the correct span, image attention is a real fraction of the mass.
+    assert 0.0 < ev.state_image_attention(attentions, span) <= 1.0
+    # Without it, the channel reports nothing rather than guessing.
+    assert ev.state_image_attention(attentions, None) == 0.0
 
 
 def test_span_with_legacy_sentinel():

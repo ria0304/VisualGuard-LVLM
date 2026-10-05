@@ -10,6 +10,7 @@ pretrained checkpoint, and no result from these tests is a research result.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 
 import pytest
 import torch
@@ -22,9 +23,17 @@ from src.model.visual_evidence import (
     hallucination_penalty,
     is_content_bearing,
     minmax_normalise,
+    NEUTRAL_EVIDENCE,
+    RegionEvidence,
+    content_words,
     normalise_values,
-    softmax_normalise,
     zscore_normalise,
+)
+from src.model.grounding import (
+    Detection,
+    GroundingConfig,
+    GroundingDINOBackend,
+    match_detection,
 )
 
 
@@ -37,10 +46,15 @@ def test_minmax_maps_to_unit_interval():
     assert minmax_normalise([0.0, 0.5, 1.0]) == pytest.approx([0.0, 0.5, 1.0])
 
 
-def test_minmax_degenerate_range_returns_ones():
-    # An all-equal candidate set has no discriminative signal. Returning 0.0
-    # would penalise every candidate and destroy the ranking.
-    assert minmax_normalise([0.7, 0.7, 0.7]) == [1.0, 1.0, 1.0]
+def test_minmax_degenerate_range_is_neutral():
+    """A constant set carries no information and must not read as full support.
+
+    Mapping it to 1.0 (maximum evidence) meant any channel that failed to
+    measure disabled the hallucination penalty for its own candidates, because
+    VES then sat above the threshold for all of them.
+    """
+    assert minmax_normalise([0.7, 0.7, 0.7]) == [NEUTRAL_EVIDENCE] * 3
+    assert minmax_normalise([0.0, 0.0]) == [NEUTRAL_EVIDENCE] * 2
 
 
 def test_minmax_empty():
@@ -57,18 +71,6 @@ def test_zscore_is_bounded_and_centred():
 
 def test_zscore_single_value_is_midpoint():
     assert zscore_normalise([5.0]) == [0.5]
-
-
-def test_softmax_is_normalised_and_stable_for_large_logits():
-    out = softmax_normalise([1000.0, 1001.0, 999.0])
-    assert math.isclose(sum(out), 1.0, rel_tol=1e-9)
-    assert all(math.isfinite(v) for v in out)
-
-
-def test_softmax_survives_extreme_values():
-    out = softmax_normalise([1e4, -1e4, 0.0])
-    assert all(math.isfinite(v) for v in out)
-    assert math.isclose(sum(out), 1.0, rel_tol=1e-9)
 
 
 def test_normalise_values_none_is_identity():
@@ -279,9 +281,19 @@ def test_candidate_embed_cos_is_bounded_and_ranked():
     assert out[0] > out[1] == pytest.approx(out[2])
 
 
-def test_candidate_embed_cos_neutral_without_embeddings():
+def test_candidate_embed_cos_reports_unavailable_rather_than_a_constant():
+    """``None`` means "cannot rank"; a constant here would read as full support.
+
+    Returning ``[0.5] * n`` looked neutral but was not: the caller min-maxes the
+    result, a constant is a degenerate range, and that mapped to ``1.0`` --
+    maximum evidence -- so an unmeasurable channel disabled the penalty.
+    """
     ev = AttentionEvidence(EvidenceConfig())
-    assert ev.candidate_embed_cos(None, None, [1, 2, 3]) == [0.5, 0.5, 0.5]
+    assert ev.candidate_embed_cos(None, None, [1, 2, 3]) is None
+    assert ev.candidate_embed_cos(torch.zeros(2, 4), None, [1, 2, 3]) is None
+    assert ev.candidate_embed_cos(None, torch.zeros(4, 4), [1, 2, 3]) is None
+    assert ev.candidate_embed_cos(torch.zeros(0, 4), torch.zeros(4, 4), [1]) is None
+    assert ev.candidate_embed_cos(None, None, []) is None
 
 
 # ---------------------------------------------------------------------------
@@ -350,3 +362,295 @@ def test_threshold_must_be_probability():
 
 def test_total_weight_property():
     assert EvidenceConfig(alpha=1.0, beta=2.0, gamma=3.0).total_weight == pytest.approx(6.0)
+
+
+# ---------------------------------------------------------------------------
+# region evidence: cache correctness and match precision
+# ---------------------------------------------------------------------------
+
+
+class _CountingGrounding(GroundingDINOBackend):
+    """Grounding DINO backend that records every real detector invocation."""
+
+    def __init__(self, cache=True, cache_size=8):
+        # Bypass the real __init__: no weights, no network.
+        self.config = GroundingConfig(backend="hf_grounding_dino", cache=cache,
+                                      cache_size=cache_size)
+        self._cache = OrderedDict()
+        self._anchors = {}
+        self.calls = []
+        self.model = object()  # marks the backend as available
+        self.processor = None
+
+    def _detect_uncached(self, image, phrases):
+        self.calls.append(list(phrases))
+        return [Detection(label=p, score=0.9, box=(0.0, 0.0, 1.0, 1.0))
+                for p in phrases]
+
+
+def test_detector_cache_is_keyed_on_phrases_not_just_image():
+    """A new phrase set must reach the detector instead of returning stale results.
+
+    Keying the cache on the image alone meant every decoding step after the
+    first was scored against the *first* step's vocabulary, so region evidence
+    was meaningless.
+    """
+    backend = _CountingGrounding()
+
+    backend.detect("img.jpg", ["dog"])
+    backend.detect("img.jpg", ["cat"])
+
+    assert len(backend.calls) == 2, (
+        f"distinct phrase sets reused one detection: {backend.calls}"
+    )
+    assert backend.calls[1] == ["cat"]
+
+    # ...while an identical phrase set still hits the cache.
+    backend.detect("img.jpg", ["cat"])
+    assert len(backend.calls) == 2
+
+
+def test_detector_cache_is_bounded():
+    backend = _CountingGrounding(cache_size=2)
+    for phrase in ["dog", "cat", "bird", "car"]:
+        backend.detect("img.jpg", [phrase])
+    assert len(backend._cache) <= 2, "detection cache grew without bound"
+
+
+def test_detection_cache_uses_value_keys_for_paths():
+    """Two equal path strings must share a cache entry.
+
+    ``id(image)`` was used as the key, which CPython recycles after garbage
+    collection, so a freed image could alias a different one.
+    """
+    backend = _CountingGrounding()
+    backend.detect("a/img.jpg", ["dog"])
+    backend.detect("a/img.jpg", ["dog"])
+    assert len(backend.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "label,phrase,expected",
+    [
+        ("dog", "dog", 0.9),                       # exact
+        ("brown dog on grass", "dog", 0.9),        # token subsequence
+        ("cattle", "cat", 0.0),                   # NOT a substring match
+        ("business", "bus", 0.0),                 # NOT a substring match
+        ("cattle", "cow", 0.0),                   # related but unsupported
+        ("a dog", "dog", 0.9),                    # article stripped
+        ("cat", "dog", 0.0),                      # unrelated
+    ],
+)
+def test_match_detection_is_token_precise(label, phrase, expected):
+    dets = [Detection(label=label, score=0.9, box=(0.0, 0.0, 1.0, 1.0))]
+    score, _ = match_detection(dets, phrase)
+    assert score == pytest.approx(expected)
+
+
+def test_region_evidence_uses_fixed_vocabulary_from_question():
+    """The detector runs once per image, on the question's content words.
+
+    Running it per decoding step is what made region evidence impractical: the
+    phrase set changes every step, so nothing would ever hit the cache.
+    """
+    cfg = EvidenceConfig(alpha=0.0, beta=0.0, gamma=1.0)
+    backend = _CountingGrounding()
+    evidence = RegionEvidence(cfg, backend)
+    assert evidence.available
+
+    evidence.prepare_for_image("img.jpg", "Is there a dog in the image?")
+    assert len(backend.calls) == 1
+    assert "dog" in evidence.vocabulary
+    assert "image" not in evidence.vocabulary, evidence.vocabulary
+
+    # Later scoring of candidates must not trigger further detector calls.
+    evidence.score("dog")
+    evidence.score("cat")
+    assert len(backend.calls) == 1, backend.calls
+
+
+def test_content_words_drops_question_scaffolding():
+    assert content_words("Is there a dog in the image?") == ["dog"]
+    # The POPE prompt template appends "Please answer this question with one
+    # word." -- none of that may reach the detector as if it named an object.
+    pope = content_words("Is there a dog in the image?\nPlease answer this question with one word.")
+    assert pope == ["dog"], pope
+    assert content_words("") == []
+    assert content_words("a red bus and two cats") == ["red", "bus", "cats"]
+
+
+# ---------------------------------------------------------------------------
+# regression: an unmeasurable channel must not read as full support
+# ---------------------------------------------------------------------------
+
+
+class _NullEmbeddings(AttentionEvidence):
+    """Channel whose inputs never yield a usable candidate ranking."""
+
+
+def _attention_only_config(**kwargs):
+    defaults = dict(alpha=1.0, beta=0.0, gamma=0.0, lam=1.0, threshold=0.35)
+    defaults.update(kwargs)
+    return EvidenceConfig(**defaults)
+
+
+def _scorer(config):
+    from src.model.visual_evidence import VisualEvidenceScorer
+
+    return VisualEvidenceScorer(config=config, backend=None)
+
+
+def test_unavailable_attention_channel_does_not_max_out_evidence():
+    """The core regression for ``--method attention`` doing nothing.
+
+    With no image features the candidate-level component is unavailable, so every
+    candidate tied. Tying used to normalise to 1.0 -- maximum evidence -- which
+    put VES above the threshold and made the penalty a no-op, so the attention
+    ablation reported zero interventions while looking like a working run.
+    """
+    scorer = _scorer(_attention_only_config())
+    candidates = [
+        Candidate(token_id=i, logit=5.0 - i, text=f"w{i}", is_content=True)
+        for i in range(5)
+    ]
+    bundle = scorer.score_candidates(None, candidates, state_image_attention=0.3)
+
+    assert len({round(c.ves, 9) for c in candidates}) == 1, "candidates diverged"
+    assert candidates[0].ves == pytest.approx(NEUTRAL_EVIDENCE)
+    assert all(c.penalty == 0.0 for c in candidates)
+    assert any("unavailable" in n or "state-level only" in n for n in bundle.notes), (
+        f"the run did not record that the channel was unmeasurable: {bundle.notes}"
+    )
+
+
+def test_available_attention_channel_actually_ranks_candidates():
+    """The positive control: with embeddings bound, the channel must discriminate."""
+    vocab, dim = 8, 2
+    scorer = _scorer(_attention_only_config())
+    token_embeddings = torch.zeros(vocab, dim)
+    token_embeddings[0] = torch.tensor([1.0, 0.0])   # aligned with the image
+    token_embeddings[1] = torch.tensor([0.0, 1.0])   # orthogonal
+    scorer.bind_embeddings(
+        input_embeddings=token_embeddings,
+        image_token_embeddings=torch.tensor([[1.0, 0.0]]),
+    )
+    candidates = [
+        Candidate(token_id=0, logit=5.0, text="w0", is_content=True),
+        Candidate(token_id=1, logit=4.0, text="w1", is_content=True),
+    ]
+    scorer.score_candidates(None, candidates, state_image_attention=0.3)
+
+    assert candidates[0].ves > candidates[1].ves, (
+        "a measurable channel did not rank the aligned candidate higher"
+    )
+    assert candidates[1].penalty > 0.0, "the weak candidate was not penalised"
+
+
+def test_disabled_region_channel_is_neutral_not_zero():
+    """An unavailable channel must not deflate VES for every candidate."""
+    scorer = _scorer(_attention_only_config(gamma=1.0, alpha=0.0, beta=0.0))
+    candidates = [
+        Candidate(token_id=i, logit=5.0, text=f"w{i}", is_content=True)
+        for i in range(3)
+    ]
+    bundle = scorer.score_candidates(None, candidates, state_image_attention=0.5)
+    assert candidates[0].ves == pytest.approx(NEUTRAL_EVIDENCE)
+    assert any("region_evidence_disabled" in n for n in bundle.notes)
+
+
+def test_ves_denominator_ignores_zero_weight_channels():
+    """A zero-weight channel must not shrink VES for every candidate.
+
+    Dividing by *all configured* weights rather than the active ones deflated VES
+    by a constant factor whenever a channel was weighted zero, which inflated the
+    penalty for every token and made the reported ``ves`` meaningless.
+    """
+    gamma_off = EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.0, lam=0.5)
+    gamma_on = EvidenceConfig(alpha=1.0, beta=1.0, gamma=0.5, lam=0.5)
+
+    assert combine_evidence([0.8], [0.8], [0.0], gamma_off)[0] == pytest.approx(0.8)
+    # gamma=0 contributes to neither numerator nor denominator.
+    assert combine_evidence([0.8], [0.8], [0.0], gamma_off)[0] == \
+        combine_evidence([0.8], [0.8], [1.0], gamma_off)[0]
+
+    # A weighted-but-unavailable channel contributes its neutral value and *is*
+    # counted in the denominator, so VES sits between the weighted mean of the
+    # measured channels and that mean shifted by the neutral third.
+    measured_only = combine_evidence([0.8], [0.8], [NEUTRAL_EVIDENCE], gamma_on)[0]
+    assert measured_only < 0.8
+    assert measured_only > 0.6
+
+
+def test_ves_requires_at_least_one_active_channel():
+    zero = EvidenceConfig(alpha=0.0, beta=0.0, gamma=0.0)
+    with pytest.raises(ValueError, match="at least one"):
+        combine_evidence([0.5], [0.5], [0.5], zero)
+
+
+def test_content_words_excludes_prompt_scaffolding():
+    """Detector vocabulary must contain objects, not prompt boilerplate."""
+    pope = content_words(
+        "Is there a dog in the image?\nPlease answer this question with one word."
+    )
+    assert pope == ["dog"]
+
+    mme = content_words(
+        "What number of people are there?\n"
+        "Answer the question using a single word or phrase."
+    )
+    assert "people" in mme
+    for noise in ("using", "single", "phrase", "answer", "question", "what", "there"):
+        assert noise not in mme, f"{noise!r} leaked into the detector vocabulary"
+
+
+def test_region_evidence_requires_the_phrase_to_be_in_the_vocabulary():
+    """A phrase the detector was never asked about carries no evidence."""
+    region = RegionEvidence(EvidenceConfig(), backend=_StubGrounding(["dog"]))
+    region.prepare("image.jpg", ["dog"])
+    assert region.score("dog") == pytest.approx(0.9)
+    # Never asked about this one, so it must not be matched against the labels.
+    assert region.score("couch") == pytest.approx(0.0)
+
+
+def test_region_prepared_requires_a_non_empty_vocabulary():
+    region = RegionEvidence(EvidenceConfig(), backend=_StubGrounding(["dog"]))
+    region.prepare("image.jpg", [])
+    # An empty phrase list yields an empty (not None) detection list, which used
+    # to read as "prepared" and suppress the diagnostic while contributing nothing.
+    assert not region.prepared
+    assert not region.has_detections
+
+
+def test_region_reset_clears_detections_and_vocabulary():
+    region = RegionEvidence(EvidenceConfig(), backend=_StubGrounding(["dog"]))
+    region.prepare("image.jpg", ["dog"])
+    assert region.prepared
+    region.reset()
+    assert not region.prepared
+    assert region.vocabulary == ()
+    assert region.score("dog") == pytest.approx(0.0)
+
+
+class _StubGrounding:
+    """Minimal grounding backend returning one box per phrase."""
+
+    available = True
+    reason = None
+
+    def __init__(self, labels):
+        self.labels = list(labels)
+
+    def detect(self, image, phrases):
+        from src.model.grounding import Detection
+
+        return [
+            Detection(label=label, score=0.9, box=(0.0, 0.0, 1.0, 1.0))
+            for label in self.labels
+            if label in phrases
+        ]
+
+    def reset(self):
+        return None
+
+    def close(self):
+        return None

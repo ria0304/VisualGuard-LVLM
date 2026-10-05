@@ -208,7 +208,8 @@ def test_mme_accuracy_plus_requires_both_questions(tmp_path):
 
     assert result.metrics["existence/accuracy"] == pytest.approx(75.0)      # 3 of 4
     assert result.metrics["existence/accuracy_plus"] == pytest.approx(50.0)  # 1 of 2 images
-    assert result.metrics["existence/score"] == pytest.approx(62.5)
+    # 100 * (0.75 + 0.50) = 125.0
+    assert result.metrics["existence/score"] == pytest.approx(125.0)
     assert result.metrics["existence/n_images"] == 2
 
 
@@ -219,9 +220,10 @@ def test_mme_perfect_subtask(tmp_path):
     result = ev.evaluate(mme_root=tmp_path, progress_every=0)
     assert result.metrics["existence/accuracy"] == pytest.approx(100.0)
     assert result.metrics["existence/accuracy_plus"] == pytest.approx(100.0)
-    assert result.metrics["existence/score"] == pytest.approx(100.0)
-    assert result.category_totals["perception_score"] == pytest.approx(100.0)
-    assert result.category_totals["total_score"] == pytest.approx(100.0)
+    # A flawless subtask reaches MME's documented 200 maximum.
+    assert result.metrics["existence/score"] == pytest.approx(200.0)
+    assert result.category_totals["perception_score"] == pytest.approx(200.0)
+    assert result.category_totals["total_score"] == pytest.approx(200.0)
 
 
 def test_mme_groups_by_image_not_by_question(tmp_path):
@@ -264,3 +266,137 @@ def test_mme_writes_predictions(tmp_path):
     ev = MMEEvaluator(gen, method="stub")
     ev.evaluate(mme_root=tmp_path, output_dir=out_dir, progress_every=0)
     assert (out_dir / "mme_stub_predictions.jsonl").is_file()
+
+
+# ---------------------------------------------------------------------------
+# the benchmark token budget must reach the decoding loop
+# ---------------------------------------------------------------------------
+#
+# POPEEvaluator/MMEEvaluator stored ``max_new_tokens`` and never used it, so the
+# decoder fell back to DecodingConfig's 64-token default. POPE answers are a
+# single word, so every sample generated 4x the intended budget.
+
+
+class _BudgetTokenizer:
+    eos_token_id = 999
+    pad_token_id = 0
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "yes"
+
+
+class _BudgetResult:
+    def __init__(self, n=1):
+        self.text = "yes"
+        self.num_generated_tokens = n
+        self.interventions = 0
+        self.interventions_detail = []
+
+
+def test_pope_evaluator_passes_its_token_budget_to_the_decoder(tmp_path):
+    """The evaluator's max_new_tokens must not be silently ignored."""
+    seen = {}
+
+    def generate_fn(image, question, max_new_tokens=None):
+        seen["max_new_tokens"] = max_new_tokens
+        return _BudgetResult()
+
+    from src.evaluation.pope_eval import POPEEvaluator
+
+    evaluator = POPEEvaluator(generate_fn=generate_fn, method="greedy",
+                              max_new_tokens=16)
+    assert evaluator.max_new_tokens == 16
+
+    from src.data.pope import POEPSample
+
+    sample = POEPSample(
+        question_id="q1", setting="random", image_id="1",
+        question="Is there a dog?", label="yes",
+        image_path=tmp_path / "000000000001.jpg",
+    )
+    evaluator._predict(sample)
+    assert seen["max_new_tokens"] == 16, (
+        "POPE's 16-token budget never reached generate_fn; the decoder would "
+        "have used its 64-token default"
+    )
+
+
+def test_mme_evaluator_passes_its_token_budget_to_the_decoder():
+    seen = {}
+
+    def generate_fn(image, question, max_new_tokens=None):
+        seen["max_new_tokens"] = max_new_tokens
+        return _BudgetResult()
+
+    from src.data.mme import MMESample
+    from src.evaluation.mme_eval import MMEEvaluator
+
+    evaluator = MMEEvaluator(generate_fn=generate_fn, method="greedy",
+                             max_new_tokens=32)
+    sample = MMESample(
+        question_id="q1", subtask="existence", image_path="a.jpg",
+        question="Is there a dog?", answer="yes", category="perception",
+    )
+    evaluator._predict(sample)
+    assert seen["max_new_tokens"] == 32
+
+
+def test_decoder_generate_honours_per_call_token_override():
+    import torch
+
+    from src.model.visual_evidence import EvidenceConfig
+    from src.model.visual_guard_decoder import DecodingConfig, VisualGuardDecoder
+
+    class _StubStep:
+        def __init__(self, logits):
+            self.logits = logits
+            self.attentions = None
+            self.past_key_values = None
+            self.image_token_span = None
+
+    class _Loop:
+        """Never emits EOS, so generation only stops at the token budget."""
+
+        def __init__(self):
+            self.device = torch.device("cpu")
+            self.model = None
+            self.calls = 0
+
+        def prepare_inputs(self, question, image=None):
+            return {"input_ids": torch.tensor([[1, 2, 3]])}
+
+        def initial_step(self, input_ids, pixel_values=None, output_attentions=False):
+            return _StubStep(torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]))
+
+        def next_step(self, input_ids, past_key_values=None, output_attentions=False):
+            self.calls += 1
+            return _StubStep(torch.tensor([[5.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]))
+
+    class _Tok(_BudgetTokenizer):
+        eos_token_id = -1  # unreachable, so only max_new_tokens stops the loop
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "yes"
+
+    dec = VisualGuardDecoder(
+        lvlm_config=None,
+        decoding_config=DecodingConfig(max_new_tokens=64),
+        evidence_config=EvidenceConfig(alpha=1.0, beta=0.0, gamma=0.0, lam=0.0,
+                                       threshold=0.35,
+                                       attention_candidate_mix=1.0),
+        method="attention",
+    )
+    backend = _Loop()
+    backend.tokenizer = _Tok()
+    dec.backend = backend
+    from src.model.visual_evidence import VisualEvidenceScorer
+
+    dec.scorer = VisualEvidenceScorer(config=dec.evidence_config)
+
+    out = dec.generate("img.jpg", "q", method="attention", max_new_tokens=3)
+    assert out.num_generated_tokens == 3, out.num_generated_tokens
+
+    # the override must not leak into later calls
+    out2 = dec.generate("img.jpg", "q", method="attention")
+    assert out2.num_generated_tokens == 64, out2.num_generated_tokens
+    assert dec.decoding_config.max_new_tokens == 64
