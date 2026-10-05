@@ -71,6 +71,7 @@ boundaries.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
@@ -89,6 +90,8 @@ from .grounding import (
 )
 
 EPS = 1e-8
+
+logger = logging.getLogger(__name__)
 
 #: Evidence value assigned to a channel that could not be measured.
 #:
@@ -545,6 +548,19 @@ class AttentionEvidence:
             # which maps to all-``1.0`` (maximum evidence). Returning a constant
             # here therefore inverted the fallback into "maximally supported".
             # The caller must handle ``None`` as "channel unavailable".
+            return None
+        # Both operands must share the embedding width, otherwise the dot product
+        # raises. A width disagreement means one of them was taken from the
+        # wrong space (e.g. unprojected vision-tower features), and scoring it
+        # would be meaningless -- so drop the channel instead of aborting a run
+        # that is otherwise fine.
+        if int(image_token_embeddings.shape[-1]) != int(token_embeddings.shape[-1]):
+            logger.warning(
+                "candidate attention evidence unavailable: image features are %d-wide "
+                "but token embeddings are %d-wide; they are not in the same space.",
+                int(image_token_embeddings.shape[-1]),
+                int(token_embeddings.shape[-1]),
+            )
             return None
         img_vec = F.normalize(image_token_embeddings.float().mean(dim=0), dim=-1)
         cand = F.normalize(token_embeddings.float()[list(candidate_token_ids)], dim=-1)

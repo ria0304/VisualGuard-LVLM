@@ -714,14 +714,26 @@ class LLaVAHFBackend(LVLMBackend):
     def image_token_embeddings(self, pixel_values: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         """Projected visual features in the LM's hidden space, ``(n_patches, d)``.
 
-        ``get_image_features`` returns vision-tower output *after* the
-        multi-modal projector, i.e. in exactly the space ``embed_tokens.weight``
-        lives in. That is what makes the comparison in
+        These must live in exactly the same space as
+        :meth:`token_embedding_matrix`, because that is what makes the comparison
+        in
         :meth:`~src.model.visual_evidence.AttentionEvidence.candidate_embed_cos`
         meaningful: a candidate token's embedding is compared against the
         projected image features the model actually sees.
 
-        Without these, the candidate-level half of the attention channel
+        Getting that wrong is not a soft failure. If the two spaces disagree the
+        comparison raises on a shape mismatch, so the attention channel takes the
+        whole run down instead of degrading. The width is therefore checked
+        explicitly and, when it disagrees, the features are pushed through the
+        multi-modal projector to put them in LM space.
+
+        That last step is required on ``transformers>=5``, where
+        ``get_image_features`` returns the *unprojected* vision-tower output
+        (width ``vision_config.hidden_size``) rather than the projected features
+        of ``transformers<5``. Without it every LLaVA checkpoint mismatches,
+        since the vision width and the LM width are different numbers.
+
+        Without any of this, the candidate-level half of the attention channel
         degenerates to a constant and the channel cannot rank candidates at all.
         """
         if self.model is None or pixel_values is None:
@@ -736,7 +748,70 @@ class LLaVAHFBackend(LVLMBackend):
             logger.warning("get_image_features failed (%s); candidate-level "
                            "attention evidence will be unavailable.", exc)
             return None
-        return _as_feature_tensor(feats)
+        tensor = _as_feature_tensor(feats)
+        if tensor is None or tensor.numel() == 0:
+            return None
+
+        lm_dim = self.lm_embedding_dim()
+        if lm_dim is not None and int(tensor.shape[-1]) != lm_dim:
+            projector = self._multi_modal_projector()
+            if projector is None:
+                logger.warning(
+                    "image features are %d-wide but the LM embedding is %d-wide, "
+                    "and no multi-modal projector is available to reconcile them; "
+                    "candidate-level attention evidence is unavailable.",
+                    int(tensor.shape[-1]), lm_dim,
+                )
+                return None
+            try:
+                with torch.no_grad():
+                    projected = projector(tensor)
+            except Exception as exc:  # pragma: no cover - checkpoint specific
+                logger.warning(
+                    "multi-modal projector failed (%s); candidate-level attention "
+                    "evidence is unavailable.", exc,
+                )
+                return None
+            projected = _as_feature_tensor(projected)
+            if projected is None or projected.numel() == 0:
+                return None
+            tensor = projected
+            if int(tensor.shape[-1]) != lm_dim:
+                logger.warning(
+                    "projected image features are %d-wide but the LM embedding is "
+                    "%d-wide; candidate-level attention evidence is unavailable.",
+                    int(tensor.shape[-1]), lm_dim,
+                )
+                return None
+        return tensor
+
+    def _multi_modal_projector(self) -> Optional[Any]:
+        """The vision->LM projector, or ``None`` if the checkpoint has none."""
+        inner = getattr(self.model, "model", None)
+        projector = getattr(inner, "multi_modal_projector", None)
+        if projector is None:
+            projector = getattr(self.model, "multi_modal_projector", None)
+        return projector if callable(projector) else None
+
+    def lm_embedding_dim(self) -> Optional[int]:
+        """Width of the LM input embedding, or ``None`` if it cannot be read.
+
+        Cheap: inspects the parameter's shape without materialising the matrix.
+        Used to check that projected image features really do live in the same
+        space as token embeddings -- see :meth:`image_token_embeddings`.
+        """
+        if self.model is None:
+            return None
+        base = getattr(self.model, "model", self.model)
+        lm = getattr(base, "language_model", base)
+        embed = getattr(lm, "embed_tokens", None)
+        weight = getattr(embed, "weight", None)
+        shape = getattr(weight, "shape", None)
+        if shape is None or len(shape) != 2:
+            # Quantised parameters hide their real shape behind packed storage.
+            matrix = self.token_embedding_matrix()
+            return None if matrix is None else int(matrix.shape[1])
+        return int(shape[1])
 
     def token_embedding_matrix(self) -> Optional[torch.Tensor]:
         """The LM input-embedding matrix, ``(vocab, d)``, in a dense float dtype.
