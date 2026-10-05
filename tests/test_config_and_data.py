@@ -984,3 +984,38 @@ def test_state_only_attention_config_is_rejected_at_config_time(tmp_path):
     )
     with pytest.raises(ConfigError, match="attention_candidate_mix"):
         build_experiment_configs(args)
+
+
+def test_dataclass_defaults_match_the_shipped_full_config():
+    """The bare default must equal ``configs/visualguard.yaml``.
+
+    ``EvidenceConfig.gamma`` defaulted to 0.5 while the YAML shipped 0.0, so a
+    bare ``--method visualguard`` silently requested a detector-backed region
+    channel — one the runner then had to refuse, because no backend is configured
+    by default. The documented default was therefore unusable.
+    """
+    from src.run import build_experiment_configs, build_parser
+
+    bare = build_experiment_configs(
+        build_parser().parse_args(["--method", "visualguard"])
+    )["evidence"]
+    shipped = build_experiment_configs(
+        build_parser().parse_args(["--method", "visualguard", "--config", "visualguard"])
+    )["evidence"]
+
+    for field in ("alpha", "beta", "gamma", "lam", "threshold"):
+        assert getattr(bare, field) == getattr(shipped, field), (
+            f"{field}: dataclass default {getattr(bare, field)} != "
+            f"configs/visualguard.yaml {getattr(shipped, field)}"
+        )
+
+
+def test_full_method_runs_without_a_detector():
+    """``--method visualguard`` must not demand a detector it does not use."""
+    from src.run import build_experiment_configs, build_parser
+
+    configs = build_experiment_configs(
+        build_parser().parse_args(["--method", "visualguard"])
+    )
+    assert configs["evidence"].gamma == 0.0
+    assert configs["grounding"].backend == "none"

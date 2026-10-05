@@ -137,7 +137,12 @@ class EvidenceConfig:
 
     alpha: float = 1.0
     beta: float = 1.0
-    gamma: float = 0.5
+    #: Region weight. Defaults to 0.0, matching ``configs/visualguard.yaml``:
+    #: region evidence is off unless a grounding backend is deliberately enabled.
+    #: It used to default to 0.5, which meant a bare ``--method visualguard``
+    #: requested a detector-backed region channel that the runner then had to
+    #: refuse -- so the dataclass default disagreed with the documented default.
+    gamma: float = 0.0
     lam: float = 0.5
     threshold: float = 0.35
 
