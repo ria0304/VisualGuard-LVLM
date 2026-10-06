@@ -1,0 +1,19 @@
+2026-10-06 16:00:56,515 INFO    visualguard: Method: sampling
+2026-10-06 16:00:56,515 INFO    visualguard: LVLM: llava-hf/llava-interleave-qwen-0.5b-hf
+2026-10-06 16:00:56,515 INFO    visualguard: Evidence weights: alpha=0.0 beta=0.0 gamma=0.0 lambda=0.0 threshold=1.0
+2026-10-06 16:00:58,950 INFO    src.model.llava_backend: Loading LVLM llava-hf/llava-interleave-qwen-0.5b-hf (dtype=torch.float32, device=cpu, quant=none)
+Loading weights:   0%|          | 0/715 [00:00<?, ?it/s]Loading weights:   8%|▊         | 57/715 [00:00<00:01, 551.13it/s]Loading weights:  16%|█▌        | 113/715 [00:00<00:01, 326.07it/s]Loading weights:  21%|██▏       | 153/715 [00:00<00:01, 341.79it/s]Loading weights:  27%|██▋       | 191/715 [00:00<00:01, 320.00it/s]Loading weights:  32%|███▏      | 229/715 [00:00<00:01, 335.90it/s]Loading weights:  37%|███▋      | 265/715 [00:00<00:01, 335.72it/s]Loading weights:  44%|████▍     | 313/715 [00:00<00:01, 375.11it/s]Loading weights:  50%|████▉     | 357/715 [00:00<00:00, 392.23it/s]Loading weights:  56%|█████▌    | 399/715 [00:01<00:00, 326.43it/s]Loading weights:  61%|██████    | 434/715 [00:01<00:01, 206.90it/s]Loading weights:  65%|██████▍   | 462/715 [00:01<00:01, 208.62it/s]Loading weights:  68%|██████▊   | 488/715 [00:01<00:01, 207.01it/s]Loading weights:  72%|███████▏  | 512/715 [00:01<00:00, 210.35it/s]Loading weights:  75%|███████▍  | 536/715 [00:02<00:00, 198.74it/s]Loading weights:  78%|███████▊  | 559/715 [00:02<00:00, 166.55it/s]Loading weights:  81%|████████  | 578/715 [00:02<00:00, 166.19it/s]Loading weights:  84%|████████▍ | 601/715 [00:02<00:00, 180.34it/s]Loading weights:  87%|████████▋ | 621/715 [00:02<00:00, 142.76it/s]Loading weights:  91%|█████████ | 649/715 [00:02<00:00, 169.97it/s]Loading weights:  94%|█████████▍| 671/715 [00:02<00:00, 177.04it/s]Loading weights:  98%|█████████▊| 699/715 [00:02<00:00, 198.51it/s]Loading weights: 100%|██████████| 715/715 [00:03<00:00, 238.21it/s]
+2026-10-06 16:01:03,543 INFO    src.data.pope: Loading POPE setting=random from ../output/POPE/coco_pope_random.jsonl
+2026-10-06 16:01:03,546 INFO    src.evaluation.pope_eval: POPE sampling/random: 10 samples (images verified present)
+2026-10-06 16:09:16,276 INFO    src.evaluation.pope_eval: Wrote 10 predictions to ../output/results/pope_random_sampling_predictions.jsonl
+2026-10-06 16:09:23,081 INFO    visualguard: Wrote results to ../output/results/probe_0p5b_sampling.json
+
+====================================================================
+VisualGuard | benchmark=pope method=sampling model=llava-hf/llava-interleave-qwen-0.5b-hf
+====================================================================
+setting            n      acc       F1     prec      rec   halluc
+-----------------------------------------------------------------
+random            10   0.9000   0.8889   1.0000   0.8000   0.0000
+runtime 499.8s | peak GPU mem None
+====================================================================
+

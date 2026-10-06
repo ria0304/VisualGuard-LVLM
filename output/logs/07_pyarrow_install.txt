@@ -1,0 +1,8 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting pyarrow
+  Downloading pyarrow-25.0.1-cp314-cp314-manylinux_2_28_x86_64.whl.metadata (3.0 kB)
+Requirement already satisfied: pandas in /home/user/.local/lib/python3.14/site-packages (3.0.5)
+Downloading pyarrow-25.0.1-cp314-cp314-manylinux_2_28_x86_64.whl (50.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 50.1/50.1 MB 46.7 kB/s eta 0:00:00
+Installing collected packages: pyarrow
+Successfully installed pyarrow-25.0.1

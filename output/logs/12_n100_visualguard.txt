@@ -1,0 +1,10 @@
+2026-10-06 16:18:02,610 INFO    visualguard: Method: visualguard
+2026-10-06 16:18:02,610 INFO    visualguard: LVLM: llava-hf/llava-interleave-qwen-0.5b-hf
+2026-10-06 16:18:02,610 INFO    visualguard: Evidence weights: alpha=1.0 beta=1.0 gamma=0.0 lambda=0.5 threshold=0.35
+2026-10-06 16:18:06,655 INFO    src.model.llava_backend: Loading LVLM llava-hf/llava-interleave-qwen-0.5b-hf (dtype=torch.float32, device=cpu, quant=none)
+Loading weights:   0%|          | 0/715 [00:00<?, ?it/s]Loading weights:  20%|██        | 145/715 [00:00<00:00, 1399.70it/s]Loading weights:  40%|███▉      | 285/715 [00:00<00:00, 801.67it/s] Loading weights:  53%|█████▎    | 379/715 [00:00<00:00, 699.02it/s]Loading weights:  64%|██████▍   | 456/715 [00:00<00:00, 713.39it/s]Loading weights:  75%|███████▍  | 533/715 [00:00<00:00, 726.60it/s]Loading weights:  85%|████████▌ | 610/715 [00:00<00:00, 730.58it/s]Loading weights:  96%|█████████▌| 686/715 [00:00<00:00, 734.08it/s]Loading weights: 100%|██████████| 715/715 [00:00<00:00, 750.18it/s]
+2026-10-06 16:18:09,886 INFO    src.data.pope: Loading POPE setting=random from ../output/POPE/coco_pope_random.jsonl
+2026-10-06 16:18:09,899 INFO    src.evaluation.pope_eval: POPE visualguard/random: 100 samples (images verified present)
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 14877.93it/s]
+/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-56331-uey6u6n6'}
+  warnings.warn(

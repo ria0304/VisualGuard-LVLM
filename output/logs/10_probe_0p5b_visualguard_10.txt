@@ -1,0 +1,20 @@
+2026-10-06 16:11:31,660 INFO    visualguard: Method: visualguard
+2026-10-06 16:11:31,660 INFO    visualguard: LVLM: llava-hf/llava-interleave-qwen-0.5b-hf
+2026-10-06 16:11:31,660 INFO    visualguard: Evidence weights: alpha=1.0 beta=1.0 gamma=0.0 lambda=0.5 threshold=0.35
+2026-10-06 16:11:33,770 INFO    src.model.llava_backend: Loading LVLM llava-hf/llava-interleave-qwen-0.5b-hf (dtype=torch.float32, device=cpu, quant=none)
+Loading weights:   0%|          | 0/715 [00:00<?, ?it/s]Loading weights:   9%|▉         | 64/715 [00:00<00:01, 639.81it/s]Loading weights:  21%|██        | 147/715 [00:00<00:00, 720.15it/s]Loading weights:  31%|███       | 221/715 [00:00<00:00, 728.91it/s]Loading weights:  44%|████▍     | 313/715 [00:00<00:00, 795.15it/s]Loading weights:  56%|█████▌    | 399/715 [00:00<00:00, 774.95it/s]Loading weights:  69%|██████▉   | 495/715 [00:00<00:00, 807.41it/s]Loading weights:  81%|████████  | 578/715 [00:00<00:00, 814.17it/s]Loading weights:  94%|█████████▍| 671/715 [00:00<00:00, 831.08it/s]Loading weights: 100%|██████████| 715/715 [00:00<00:00, 804.35it/s]
+2026-10-06 16:11:35,347 INFO    src.data.pope: Loading POPE setting=random from ../output/POPE/coco_pope_random.jsonl
+2026-10-06 16:11:35,348 INFO    src.evaluation.pope_eval: POPE visualguard/random: 10 samples (images verified present)
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 33824.35it/s]
+2026-10-06 16:14:23,940 INFO    src.evaluation.pope_eval: Wrote 10 predictions to ../output/results/pope_random_visualguard_predictions.jsonl
+2026-10-06 16:14:24,520 INFO    visualguard: Wrote results to ../output/results/probe_0p5b_visualguard_10.json
+
+====================================================================
+VisualGuard | benchmark=pope method=visualguard model=llava-hf/llava-interleave-qwen-0.5b-hf
+====================================================================
+setting            n      acc       F1     prec      rec   halluc
+-----------------------------------------------------------------
+random            10   0.9000   0.8889   1.0000   0.8000   0.0000
+runtime 172.3s | peak GPU mem None
+====================================================================
+

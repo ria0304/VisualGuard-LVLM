@@ -1,0 +1,19 @@
+2026-10-06 16:00:56,465 INFO    visualguard: Method: beam
+2026-10-06 16:00:56,465 INFO    visualguard: LVLM: llava-hf/llava-interleave-qwen-0.5b-hf
+2026-10-06 16:00:56,465 INFO    visualguard: Evidence weights: alpha=0.0 beta=0.0 gamma=0.0 lambda=0.0 threshold=1.0
+2026-10-06 16:00:59,029 INFO    src.model.llava_backend: Loading LVLM llava-hf/llava-interleave-qwen-0.5b-hf (dtype=torch.float32, device=cpu, quant=none)
+Loading weights:   0%|          | 0/715 [00:00<?, ?it/s]Loading weights:  14%|█▍        | 101/715 [00:00<00:00, 929.59it/s]Loading weights:  27%|██▋       | 194/715 [00:00<00:00, 645.63it/s]Loading weights:  37%|███▋      | 264/715 [00:00<00:00, 580.81it/s]Loading weights:  45%|████▌     | 325/715 [00:00<00:00, 570.57it/s]Loading weights:  54%|█████▎    | 384/715 [00:00<00:00, 539.98it/s]Loading weights:  61%|██████▏   | 439/715 [00:01<00:00, 278.17it/s]Loading weights:  67%|██████▋   | 480/715 [00:01<00:00, 248.10it/s]Loading weights:  72%|███████▏  | 514/715 [00:01<00:00, 201.41it/s]Loading weights:  76%|███████▌  | 541/715 [00:01<00:00, 177.29it/s]Loading weights:  79%|███████▊  | 563/715 [00:02<00:00, 160.95it/s]Loading weights:  82%|████████▏ | 585/715 [00:02<00:00, 169.76it/s]Loading weights:  85%|████████▍ | 607/715 [00:02<00:00, 176.63it/s]Loading weights:  90%|████████▉ | 643/715 [00:02<00:00, 215.06it/s]Loading weights:  94%|█████████▍| 671/715 [00:02<00:00, 209.09it/s]Loading weights:  97%|█████████▋| 695/715 [00:02<00:00, 209.92it/s]Loading weights: 100%|██████████| 715/715 [00:02<00:00, 274.53it/s]
+2026-10-06 16:01:03,391 INFO    src.data.pope: Loading POPE setting=random from ../output/POPE/coco_pope_random.jsonl
+2026-10-06 16:01:03,394 INFO    src.evaluation.pope_eval: POPE beam/random: 10 samples (images verified present)
+2026-10-06 16:10:51,569 INFO    src.evaluation.pope_eval: Wrote 10 predictions to ../output/results/pope_random_beam_predictions.jsonl
+2026-10-06 16:10:55,617 INFO    visualguard: Wrote results to ../output/results/probe_0p5b_beam.json
+
+====================================================================
+VisualGuard | benchmark=pope method=beam model=llava-hf/llava-interleave-qwen-0.5b-hf
+====================================================================
+setting            n      acc       F1     prec      rec   halluc
+-----------------------------------------------------------------
+random            10   0.9000   0.8889   1.0000   0.8000   0.0000
+runtime 595.1s | peak GPU mem None
+====================================================================
+

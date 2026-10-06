@@ -1,0 +1,16 @@
+Tue Oct  6 09:11:11 AM UTC 2026
+== env ==
+Linux user-Inspiron-15-3530 7.0.0-34-generic #34-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:29:37 UTC 2026 x86_64 GNU/Linux
+model name	: 13th Gen Intel(R) Core(TM) i7-1355U
+12
+               total        used        free      shared  buff/cache   available
+Mem:           15160        4549        8195         687        3436       10611
+Swap:           4095           0        4095
+/dev/nvme0n1p7  211G   40G  160G  20% /
+== python ==
+Python 3.14.4
+torch 2.14.0+cpu
+transformers 5.18.0
+cuda False
+== pycocotools ==
+ModuleNotFoundError: No module named 'pycocotools'

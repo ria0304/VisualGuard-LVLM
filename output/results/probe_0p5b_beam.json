@@ -1,0 +1,117 @@
+{
+  "efficiency": {
+    "peak_gpu_memory_mb": null,
+    "total_runtime_s": 595.109129597
+  },
+  "pope": {
+    "random": {
+      "benchmark": "pope",
+      "latency_s": 588.1641846879993,
+      "method": "beam",
+      "metrics": {
+        "accuracy": 0.9,
+        "f1": 0.888888888888889,
+        "fn": 1,
+        "fp": 0,
+        "fpr": 0.0,
+        "hallucination_rate": 0.0,
+        "n": 10,
+        "no_ratio": 0.6,
+        "parseable": 10,
+        "precision": 1.0,
+        "recall": 0.8,
+        "specificity": 1.0,
+        "tn": 5,
+        "tp": 4,
+        "unparseable": 0,
+        "yes_ratio": 0.4
+      },
+      "n_samples": 10,
+      "notes": [],
+      "peak_memory_mb": null,
+      "per_token_latency_s": 29.408209234399965,
+      "setting": "random"
+    }
+  },
+  "provenance": {
+    "command": "run.py --benchmark pope --method beam --config baseline --model llava-hf/llava-interleave-qwen-0.5b-hf --device cpu --dtype float32 --data-root ../output/POPE --image-root ../output/coco_images --setting random --max-samples 10 --output-dir ../output/results --run-name probe_0p5b_beam",
+    "config_file": "/home/user/Music/VisualGuard-LVLM-main/VisualGuard-LVLM/configs/baseline.yaml",
+    "cpu_count": 12,
+    "device": {
+      "cuda_available": false,
+      "device_count": 0,
+      "torch_device": "cpu"
+    },
+    "git_commit": "2c73967bf9eaad687535e15bb5111ad2296682b0",
+    "git_dirty": false,
+    "library_versions": {
+      "PIL": "12.1.1",
+      "accelerate": "1.15.0",
+      "bitsandbytes": "0.50.2",
+      "numpy": "2.5.3",
+      "python": "3.14.4",
+      "torch": "2.14.0+cpu",
+      "transformers": "5.18.0",
+      "yaml": "6.0.3"
+    },
+    "max_samples": 10,
+    "method": "beam",
+    "model": "llava-hf/llava-interleave-qwen-0.5b-hf",
+    "note": "max_samples was set: these numbers are NOT comparable to a full-dataset run",
+    "platform": "Linux-7.0.0-34-generic-x86_64-with-glibc2.43",
+    "processor": "",
+    "run_name": "probe_0p5b_beam",
+    "seed": 42,
+    "timestamp_utc": "2026-10-06T10:40:51.576745+00:00"
+  },
+  "resolved_config": {
+    "decoding": {
+      "max_new_tokens": 16,
+      "num_beams": 4,
+      "repetition_penalty": 1.0,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0
+    },
+    "evidence": {
+      "alpha": 0.0,
+      "attention_candidate_mix": 0.5,
+      "beta": 0.0,
+      "clip_device": null,
+      "clip_model_name": "openai/clip-vit-base-patch32",
+      "gamma": 0.0,
+      "head_aggregation": "mean",
+      "lam": 0.0,
+      "layer_aggregation": "mean",
+      "layer_fraction": 0.5,
+      "normalize": "minmax",
+      "penalise_function_words": false,
+      "threshold": 1.0
+    },
+    "grounding": {
+      "backend": "none",
+      "box_threshold": 0.3,
+      "cache": true,
+      "cache_size": 8,
+      "device": "cpu",
+      "dtype": "float32",
+      "grounding_device_alias": null,
+      "grounding_dtype": null,
+      "max_detections": 64,
+      "model_id": "IDEA-Research/grounding-dino-base",
+      "text_threshold": 0.25
+    },
+    "lvlm": {
+      "attn_implementation": "eager",
+      "cache_dir": null,
+      "device": "cpu",
+      "dtype": "float32",
+      "load_in_4bit": false,
+      "load_in_8bit": false,
+      "max_new_tokens": 64,
+      "model_name": "llava-hf/llava-interleave-qwen-0.5b-hf",
+      "revision": "main",
+      "trust_remote_code": false
+    }
+  }
+}

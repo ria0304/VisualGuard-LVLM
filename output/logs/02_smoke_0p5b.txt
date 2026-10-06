@@ -1,0 +1,57 @@
+Tue Oct  6 09:11:20 AM UTC 2026
+OMP_NUM_THREADS=
+======================================================================
+VisualGuard plumbing smoke test
+model: llava-hf/llava-interleave-qwen-0.5b-hf
+NOTE: the default checkpoint is a small real LVLM (llava-hf/llava-interleave-qwen-0.5b-hf).
+      This validates plumbing only. It says NOTHING about accuracy,
+      and small models hallucinate more than the 7B experiment model.
+======================================================================
+[  ok ] test image written to disk  (/tmp/visualguard_smoke_a3bd9j4x/image.jpg)
+Loading weights:   0%|          | 0/715 [00:00<?, ?it/s]Loading weights:  17%|█▋        | 124/715 [00:00<00:00, 1189.38it/s]Loading weights:  34%|███▍      | 243/715 [00:00<00:00, 1066.43it/s]Loading weights:  49%|████▉     | 351/715 [00:00<00:00, 991.43it/s] Loading weights:  63%|██████▎   | 451/715 [00:00<00:00, 989.52it/s]Loading weights:  77%|███████▋  | 551/715 [00:00<00:00, 968.65it/s]Loading weights:  92%|█████████▏| 655/715 [00:00<00:00, 970.69it/s]Loading weights: 100%|██████████| 715/715 [00:00<00:00, 1005.84it/s]
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[  ok ] real HF checkpoint loaded
+[  ok ] tokenizer available
+[  ok ] image processor available
+[  ok ] model on expected device  (cpu)
+[  ok ] prompt + image encoded together
+[  ok ] prompt encoded  (tokens=746)
+[  ok ] pixel_values present  (shape=(1, 3, 384, 384))
+[  ok ] image token span resolved  (span=(3, 732))
+[  ok ] image span fits the sequence  (span=(3, 732) n_tokens=746)
+[  ok ] initial_step returned logits  (vocab=152000)
+[  ok ] initial_step returned a KV cache
+[  ok ] attentions returned  (layers=24)
+[  ok ] attention evidence is bounded  (value=0.1307 span=(3, 732))
+[  ok ] attention evidence is non-degenerate  (value=0.1307; 0.0 means the image-token span was wrong)
+[  ok ] cached next_step returned logits
+[  ok ] candidate set built
+[  ok ] candidates are content-flagged
+[  ok ] VES values bounded
+[  ok ] penalties non-negative
+[  ok ] scorer reported whether image features were bound  (available=False)
+[  ok ] baseline generate() returned text  (text='The image is a')
+[  ok ] baseline produced no interventions
+[  ok ] baseline latency recorded
+[  ok ] image features bound for candidate-level attention  (without these the attention channel cannot rank candidates)
+[  ok ] VisualGuard loop generated text  (text='The image is a')
+[  ok ] VisualGuard produced per-step candidates  (tokens=4)
+[  ok ] VisualGuard recorded a latency  (5724.5 ms/token)
+[ FAIL] VisualGuard actually intervened  (interventions=0; 0 means the evidence penalty never changed the selected token)
+[ FAIL] intervention detail is auditable  (recorded=0)
+[  ok ] unpenalised control applies no penalty  (interventions=0)
+[ FAIL] penalised decoding differs from unpenalised decoding  (penalised=[785, 2168, 374, 264] unpenalised=[785, 2168, 374, 264])
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 37140.86it/s]
+[  ok ] CLIP produced similarities  (sims=[0.206, 0.204])
+======================================================================
+30/33 checks passed
+FAILED checks:
+  - VisualGuard actually intervened interventions=0; 0 means the evidence penalty never changed the selected token
+  - intervention detail is auditable recorded=0
+  - penalised decoding differs from unpenalised decoding penalised=[785, 2168, 374, 264] unpenalised=[785, 2168, 374, 264]
+Reminder: this smoke test validates plumbing, not method quality.
+======================================================================
+
+real	1m46.279s
+user	11m42.289s
+sys	1m13.225s

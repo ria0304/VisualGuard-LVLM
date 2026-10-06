@@ -1,0 +1,5 @@
+OK random /home/user/.cache/huggingface/hub/datasets--lmms-lab--POPE/snapshots/4db1276663dfa5eb8ad16a52d24c31a09e470896/Full/random-00000-of-00001.parquet
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+OK popular /home/user/.cache/huggingface/hub/datasets--lmms-lab--POPE/snapshots/4db1276663dfa5eb8ad16a52d24c31a09e470896/Full/popular-00000-of-00001.parquet
+OK adversarial /home/user/.cache/huggingface/hub/datasets--lmms-lab--POPE/snapshots/4db1276663dfa5eb8ad16a52d24c31a09e470896/Full/adversarial-00000-of-00001.parquet
+POPE DL DONE

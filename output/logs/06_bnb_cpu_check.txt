@@ -1,0 +1,4 @@
+Tue Oct  6 09:59:13 AM UTC 2026
+bnb 0.50.2 torch 2.14.0+cpu
+4bit quantize/dequantize OK torch.uint8 torch.Size([32768, 1]) -> torch.Size([256, 256]) torch.float32
+fp4 OK
