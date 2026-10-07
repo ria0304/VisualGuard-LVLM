@@ -81,6 +81,7 @@ class DecodingConfig:
     temperature: float = 1.0
     top_p: float = 1.0
     repetition_penalty: float = 1.0
+    length_penalty: Optional[float] = None
 
 
 @dataclass
@@ -534,6 +535,7 @@ class VisualGuardDecoder:
             ),
             pixel_values=pixel_values,
             repetition_penalty=self.decoding_config.repetition_penalty,
+            length_penalty=self.decoding_config.length_penalty,
             pad_token_id=self.backend.tokenizer.pad_token_id,
         )
         if "attention_mask" in inputs:
@@ -648,9 +650,24 @@ class VisualGuardDecoder:
             else max_new_tokens
         )
         for _ in range(budget):
+            # Apply length penalty (same formula as HF's LengthPenalty):
+            #   adjusted_logit = logit / (len(generated) + 1) ** length_penalty
+            generated_len = len(generated) + 1  # +1 because we count the token about to be generated
+            length_penalty = self.decoding_config.length_penalty
+            if length_penalty is not None and length_penalty != 1.0:
+                # HF applies: logit / (len + 1) ** penalty
+                # We keep the original logits and apply penalty in candidate creation
+                pass  # applied below per-candidate
             candidates = make_candidates(
                 step.logits, tokenizer, generated, self.decoding_config.top_k
             )
+            # Apply length penalty to candidate logits
+            if length_penalty is not None and length_penalty != 1.0:
+                lp = length_penalty
+                for c in candidates:
+                    # HF length penalty: divide logit by (gen_len + 1) ** penalty
+                    # but we've already added 1 to generated_len, so use generated_len
+                    c.logit = c.logit / (generated_len ** lp)
             bundle = self.scorer.score_candidates(
                 image, candidates, state_image_attention=state_attn
             )

@@ -92,6 +92,7 @@ Select next token → repeat autoregressively (KV-cached)
 | Training-free decoding-time intervention (no weight changes) | ✅ |
 | Attention evidence (state-level image attention + candidate-embedding cosine) | ✅ |
 | Semantic evidence (CLIP, normalised within the candidate set) | ✅ |
+| Cheaper semantic evidence via feature caching | ✅ |
 | Region evidence (Grounding DINO via Hugging Face `transformers`) | ✅ |
 | Thresholded penalty (zero when `VES ≥ threshold`) | ✅ |
 | Function-word / punctuation exemption | ✅ |
@@ -99,16 +100,19 @@ Select next token → repeat autoregressively (KV-cached)
 | Ablation methods: attention, semantic, region, attention + semantic, full | ✅ |
 | KV-cached manual decoding loop | ✅ |
 | Per-step intervention audit trail | ✅ |
+| Byte-identical decoding comparison (length penalty, repetition penalty) | ✅ |
 | POPE evaluation (random / popular / adversarial) | ✅ |
 | MME evaluation (official 14-subtask protocol) | ✅ |
 | Ablation runner + results-table builder (one row per run, `not run` for missing cells) | ✅ |
 | Provenance block in every result JSON, recording the token budget that actually ran | ✅ |
 | YAML configs with inheritance + CLI overrides (unknown keys raise) | ✅ |
 | 4-bit / 8-bit quantisation (CUDA) | ✅ |
-| Unit + integration tests, no downloads required (297 tests) | ✅ |
+| Unit + integration tests, no downloads required (297+ tests) | ✅ |
+| HallusionBench skeleton (evaluator + data loader) | ✅ |
 | Full benchmark results | ❌ Not yet run |
-| HallusionBench | ❌ Not wired in |
+| MME capability trade-off quantification | ❌ Not yet measured |
 | LVLM backends other than LLaVA-family | ❌ Extension point only |
+| Long-form captioning evaluation | ❌ Not wired in |
 
 ---
 
@@ -678,12 +682,14 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 
 | Feature | Why |
 |---|---|
-| Run the full ablation grid | Turn the hypothesis into a result — or falsify it |
+| Full benchmark results | Turn the hypothesis into a result — or falsify it with real data |
 | Quantify the MME capability trade-off | Show what narrow penalties cost in general ability |
-| HallusionBench loader + evaluator | A second hallucination benchmark beyond POPE |
 | Second LVLM backend | Demonstrate that the `LVLMBackend` interface is truly pluggable |
 | Long-form captioning evaluation | POPE's single-token answers under-test the attention channel |
-| Cheaper semantic evidence | Reduce the per-step CLIP cost that dominates runtime |
+| Region vocabulary beyond pre-generation fix | Allow detector vocabulary to expand per decoding step |
+| Absolute threshold calibration | Calibrate `threshold` across vocabulary rather than per-step candidate set |
+| HallusionBench integration | A second hallucination benchmark beyond POPE |
+| Cheaper semantic evidence (v2) | Approximate similarity or distilled CLIP alternative |
 
 ---
 

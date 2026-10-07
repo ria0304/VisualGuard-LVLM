@@ -600,6 +600,7 @@ class SemanticEvidence:
         self.model: Optional[Any] = None
         self.processor: Optional[Any] = None
         self._image_features: Optional[torch.Tensor] = None
+        self._text_feature_cache: Dict[str, torch.Tensor] = {}
 
     def load(self) -> None:
         if self.model is not None:
@@ -636,14 +637,13 @@ class SemanticEvidence:
         self._image_features = F.normalize(feats.detach().float(), dim=-1)
         return self._image_features
 
-    def raw_similarities(self, image: Any, texts: Sequence[str]) -> List[float]:
-        """Raw CLIP cosine similarities between ``image`` and each text."""
-        self.load()
-        if not texts:
-            return []
-        img = self.encode_image(image)
+    def _get_text_features(self, text: str) -> torch.Tensor:
+        """Get CLIP text features, using a cache to avoid re-encoding."""
+        if text in self._text_feature_cache:
+            return self._text_feature_cache[text]
+        prompt = _clip_prompt(text)
         inputs = self.processor(
-            text=[_clip_prompt(t) for t in texts],
+            text=[prompt],
             return_tensors="pt",
             padding=True,
             truncation=True,
@@ -652,7 +652,17 @@ class SemanticEvidence:
         with torch.no_grad():
             txt = _as_tensor(self.model.get_text_features(**inputs))
         txt = F.normalize(txt.detach().float(), dim=-1)
-        sims = (txt @ img.T).squeeze(-1)
+        self._text_feature_cache[text] = txt
+        return txt
+
+    def raw_similarities(self, image: Any, texts: Sequence[str]) -> List[float]:
+        """Raw CLIP cosine similarities between ``image`` and each text."""
+        self.load()
+        if not texts:
+            return []
+        img = self.encode_image(image)
+        text_features = torch.cat([self._get_text_features(t) for t in texts], dim=0)
+        sims = (text_features @ img.T).squeeze(-1)
         return [float(s) for s in sims]
 
     def score(self, image: Any, texts: Sequence[str]) -> List[float]:
@@ -663,8 +673,9 @@ class SemanticEvidence:
         return normalise_values(raw, self.config.normalize)
 
     def reset_image(self) -> None:
-        """Drop the cached image features (call when the image changes)."""
+        """Drop the cached image features and text feature cache (call when the image changes)."""
         self._image_features = None
+        self._text_feature_cache.clear()
 
 
 class RegionEvidence:
