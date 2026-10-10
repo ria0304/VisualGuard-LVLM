@@ -1,0 +1,155 @@
+name: Benchmark (POPE)
+
+# Manual run: Actions tab -> "Benchmark (POPE)" -> Run workflow.
+# GitHub-hosted runners are CPU-only with ~7 GB RAM, so the default is the
+# 0.5B LLaVA-family checkpoint on a capped sample. A 7B model needs a
+# self-hosted GPU runner (set `runner` and `device` below).
+
+on:
+  workflow_dispatch:
+    inputs:
+      method:
+        description: Decoding method
+        type: choice
+        default: baseline
+        options: [baseline, sampling, beam, attention, semantic, visualguard]
+      setting:
+        description: POPE setting
+        type: choice
+        default: random
+        options: [random, popular, adversarial, all]
+      max_samples:
+        description: Samples per setting (0 = full split)
+        type: string
+        default: "100"
+      model:
+        description: Hugging Face model id
+        type: string
+        default: llava-hf/llava-interleave-qwen-0.5b-hf
+      device:
+        description: cpu or cuda
+        type: choice
+        default: cpu
+        options: [cpu, cuda]
+      runner:
+        description: Runner label (ubuntu-latest, or a self-hosted GPU label)
+        type: string
+        default: ubuntu-latest
+      commit_results:
+        description: Commit results/ back to the branch
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 330
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}   # optional; raises HF rate limits
+      METHOD: ${{ inputs.method }}
+      SETTING: ${{ inputs.setting }}
+      N: ${{ inputs.max_samples }}
+      MODEL: ${{ inputs.model }}
+      DEVICE: ${{ inputs.device }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ "$DEVICE" = "cpu" ]; then
+            python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          fi
+          python -m pip install -r requirements.txt
+          python -m pip install pyarrow huggingface_hub
+
+      - name: Cache Hugging Face (model + POPE)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}-pope
+
+      - name: Download and convert POPE
+        run: |
+          python - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          from huggingface_hub import hf_hub_download
+          dst = Path(os.environ["RUNNER_TEMP"]) / "pope_parquet"
+          dst.mkdir(parents=True, exist_ok=True)
+          for s in ("random", "popular", "adversarial"):
+              p = hf_hub_download(
+                  repo_id="lmms-lab/POPE", repo_type="dataset",
+                  filename=f"Full/{s}-00000-of-00001.parquet",
+              )
+              shutil.copy(p, dst / f"{s}-00000-of-00001.parquet")
+              print("OK", s)
+          PY
+          ARGS=""
+          if [ "${N:-0}" != "0" ]; then ARGS="--max-rows $N"; fi
+          python output/convert_pope.py \
+            --parquet-dir "$RUNNER_TEMP/pope_parquet" \
+            --data-root "$RUNNER_TEMP/POPE" \
+            --image-root "$RUNNER_TEMP/POPE/images" $ARGS
+
+      - name: Run benchmark
+        run: |
+          RUN="${METHOD}_${SETTING}_n${N}"
+          CMD=(python -m src.run
+            --benchmark pope
+            --method "$METHOD"
+            --model "$MODEL"
+            --device "$DEVICE"
+            --data-root "$RUNNER_TEMP/POPE"
+            --image-root "$RUNNER_TEMP/POPE/images"
+            --output-dir results
+            --run-name "$RUN")
+          if [ "$DEVICE" = "cpu" ]; then CMD+=(--dtype float32); else CMD+=(--dtype float16); fi
+          if [ "$SETTING" != "all" ]; then CMD+=(--setting "$SETTING"); fi
+          if [ "${N:-0}" != "0" ]; then CMD+=(--max-samples "$N"); fi
+          case "$METHOD" in
+            attention|semantic|visualguard) CMD+=(--config "$METHOD") ;;
+          esac
+          echo "${CMD[@]}"
+          "${CMD[@]}"
+
+      - name: Build results table
+        if: always()
+        run: |
+          python scripts/make_results_table.py --results-dir results | tee results/results_table.md || true
+          { echo '### Results'; cat results/results_table.md 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ inputs.method }}-${{ inputs.setting }}-n${{ inputs.max_samples }}
+          path: results/
+          if-no-files-found: warn
+
+      - name: Commit results
+        if: ${{ success() && inputs.commit_results }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f results
+          if git diff --cached --quiet; then
+            echo "No result changes to commit."
+          else
+            git commit -m "results: ${METHOD} ${SETTING} n=${N} (${MODEL})"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
