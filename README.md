@@ -4,8 +4,8 @@
 <img src="https://img.shields.io/badge/PyTorch-Transformers-orange?style=flat-square&logo=pytorch" />
 <img src="https://img.shields.io/badge/LVLM-LLaVA--1.5-blue?style=flat-square" />
 <img src="https://img.shields.io/badge/Evidence-Attention%20%C2%B7%20CLIP%20%C2%B7%20Grounding%20DINO-purple?style=flat-square" />
-<img src="https://img.shields.io/badge/Benchmarks-POPE%20%C2%B7%20MME-green?style=flat-square" />
-<img src="https://img.shields.io/badge/Status-Implementation%20complete%2C%20no%20results%20yet-lightgrey?style=flat-square" />
+<img src="https://img.shields.io/badge/Benchmarks-POPE%20%C2%B7%20MME%20%C2%B7%20CHAIR-green?style=flat-square" />
+<img src="https://img.shields.io/badge/Status-Implementation%20complete%20%C2%B7%20pilot%20results%20only-yellow?style=flat-square" />
 
 
 # VisualGuard — Dynamic Visual Evidence-Guided Decoding for Hallucination Reduction in LVLMs
@@ -19,8 +19,8 @@ VisualGuard is a training-free, decoding-time intervention for Large Vision-Lang
 
 ---
 
-> **Status: implementation complete, results not yet available.**
-> This repository implements the method and a reproducible evaluation framework. **No experimental results are reported here, because no full benchmark run has been performed.** Every results table is generated from real result JSONs on disk; unmeasured cells are rendered as `not run`, never as zeros or estimates.
+> **Status: implementation complete, pilot results only.**
+> This repository implements the method and a reproducible evaluation framework. The only measured result so far is a **small-model CPU pilot** (see [Results so far](#results-so-far)): it does **not** show that VisualGuard reduces hallucination. No full-benchmark run on the 7B model has been performed. Every results table is generated from real result JSONs on disk; unmeasured cells are rendered as `not run`, never as zeros or estimates.
 
 ---
 
@@ -57,6 +57,25 @@ The system outputs:
 - A **result JSON with full provenance** (seed, model, git commit, resolved config, library versions, runtime, peak GPU memory)
 
 Because the method is training-free, every baseline and every ablation runs against **the same checkpoint, the same prompts and the same seed**, so measured differences are attributable to the decoding rule alone.
+
+---
+
+## Results so far
+
+One run at scale exists, produced by the `Benchmark (POPE)` GitHub Actions workflow on a CPU-only runner (`results/visualguard_random_n1000.json`, seed 42):
+
+| Setting | Model | Method | n | Accuracy | Precision | Recall | F1 | Yes-ratio | Hallucination rate |
+|---|---|---|---|---|---|---|---|---|---|
+| POPE random | `llava-interleave-qwen-0.5b-hf` | `visualguard` (α=1, β=1, γ=0, λ=0.5, τ=0.35) | 1000 | 0.872 | 0.974 | 0.764 | 0.857 | 0.392 | 0.020 |
+
+**How to read this number — it is not evidence that the method works:**
+
+- **The penalty never fired.** In `results/pope_random_visualguard_predictions.jsonl`, `interventions` is `0` for all 1000 samples, and every answer is two tokens long. The decoded answers are therefore what unmodified greedy decoding would give. The run shows the pipeline works end to end, not that the evidence channels help.
+- **There is no matched baseline at n = 1000.** Greedy, sampling and beam were run only on 10 samples (`output/results/probe_0p5b_*.json`), where all three and VisualGuard score identically (accuracy 0.90, F1 0.889). Ten samples cannot separate anything.
+- **It is the wrong model and one split.** The 0.5B checkpoint is not the 7B experiment model. Only the `random` split (the easiest) was run; `popular`, `adversarial` and MME were not.
+- **No CHAIR, VCD, region-evidence or MME result exists yet.**
+
+Probe runs under `output/` (logs in `output/logs/`) are plumbing checks and are listed for provenance only. Re-score or audit any run from its predictions file. The table builder marks the n = 1000 row as not comparable to a full-dataset run (`--max-samples` was set).
 
 ---
 
@@ -107,12 +126,17 @@ Select next token → repeat autoregressively (KV-cached)
 | Provenance block in every result JSON, recording the token budget that actually ran | ✅ |
 | YAML configs with inheritance + CLI overrides (unknown keys raise) | ✅ |
 | 4-bit / 8-bit quantisation (CUDA) | ✅ |
-| Unit + integration tests, no downloads required (297+ tests) | ✅ |
-| HallusionBench skeleton (evaluator + data loader) | ✅ |
-| Full benchmark results | ❌ Not yet run |
+| Unit + integration tests, no downloads required (313 tests) | ✅ |
+| VCD baseline (Visual Contrastive Decoding, Leng et al. 2024) | ✅ (CHAIR script only) |
+| CHAIR evaluation for open-ended captioning (`scripts/run_chair.py`) | ✅ |
+| HallusionBench evaluator + data loader | ✅ (not yet reachable from `src.run`) |
+| Runtime profiler (`src/utils/profiler.py`) | ✅ |
+| GitHub Actions: tests, real-model smoke test, manual POPE benchmark | ✅ |
+| Pilot result: 0.5B model, POPE random, n = 1000 | ✅ (no interventions fired; see above) |
+| Full benchmark results (7B, all POPE splits, MME) | ❌ Not yet run |
 | MME capability trade-off quantification | ❌ Not yet measured |
 | LVLM backends other than LLaVA-family | ❌ Extension point only |
-| Long-form captioning evaluation | ❌ Not wired in |
+| CHAIR results | ❌ Evaluator exists, never run |
 
 ---
 
@@ -196,6 +220,9 @@ All share one LVLM, one prompt template and one seed:
 | `region` | VisualGuard with `α = β = 0` | ✅ |
 | `unidirectional` | Attention + semantic | — |
 | `visualguard` | All channels | Only if `γ > 0` |
+| `vcd` | Visual Contrastive Decoding baseline (two forward passes: original vs noised image) | — |
+
+`vcd` is available through `scripts/run_chair.py` only; `src.run` does not accept it.
 
 Baselines run through the standard `model.generate` path and never build an evidence scorer, so they do not pay the evidence cost and cannot be accidentally modified.
 
@@ -271,17 +298,21 @@ VisualGuard-LVLM/
 │   │   ├── llava_backend.py          # Pretrained LVLM loading + KV-cached decode steps
 │   │   ├── visual_evidence.py        # VES channels, combination, penalty
 │   │   ├── visual_guard_decoder.py   # Decoding-time intervention + baselines
+│   │   ├── vcd.py                    # Visual Contrastive Decoding baseline
 │   │   └── grounding.py              # Optional Grounding DINO backend
-│   ├── data/                         # POPE / MME / COCO loaders (strict validation)
+│   ├── data/                         # Benchmark loaders (strict validation)
 │   │   ├── pope.py
 │   │   ├── mme.py
-│   │   └── coco.py
+│   │   └── hallusionbench.py
 │   ├── evaluation/
 │   │   ├── pope_eval.py              # POPE evaluation
 │   │   ├── mme_eval.py               # MME evaluation
+│   │   ├── chair_eval.py             # CHAIR (open-ended captioning)
+│   │   ├── hallusionbench_eval.py    # HallusionBench evaluation
 │   │   └── metrics.py                # Accuracy / P / R / F1 / hallucination rate / MME
 │   └── utils/
 │       ├── config.py                 # YAML + CLI config resolution
+│       ├── profiler.py               # Wall-clock timing sections
 │       └── reproducibility.py        # Seeding, versions, device, git commit
 │
 ├── configs/
@@ -295,6 +326,7 @@ VisualGuard-LVLM/
 ├── scripts/
 │   ├── run_ablations.py              # Runs the full ablation grid + lambda sweep
 │   ├── make_results_table.py         # Builds the comparison table from result JSONs
+│   ├── run_chair.py                  # CHAIR captioning evaluation (also --method vcd)
 │   └── smoke_test.py                 # End-to-end plumbing check on a small real LVLM
 │
 ├── tests/
@@ -304,9 +336,14 @@ VisualGuard-LVLM/
 │   ├── test_llava_backend.py
 │   ├── test_config_and_data.py
 │   ├── test_evaluators_integration.py
-│   └── test_make_results_table.py
+│   ├── test_make_results_table.py
+│   ├── test_chair.py
+│   ├── test_vcd.py
+│   └── test_profiler.py
 │
-├── results/                          # Run outputs (gitignored except .gitkeep)
+├── .github/workflows/                # CI tests, real-model smoke tests, manual POPE benchmark
+├── output/                           # Pilot probe results, logs, POPE conversion helper
+├── results/                          # Run outputs (n = 1000 pilot, results table, predictions)
 ├── requirements.txt
 └── .gitignore
 ```
@@ -519,6 +556,20 @@ total         = perception_score + cognition_score
 
 **Scope note.** This reproduces the classic 14-subtask yes/no MME benchmark. MME variants that use a GPT-based judge are a different protocol and are *not* reproduced or approximated.
 
+### CHAIR (open-ended captioning)
+
+`scripts/run_chair.py` asks each method for a long-form caption on the same sampled COCO images and scores it with the official CHAIR protocol: `CHAIR_s` (captions with at least one hallucinated object), `CHAIR_i` (hallucinated object mentions), object recall and mean caption length. It needs the COCO `instances_*` / `captions_*` annotations and the official CHAIR synonym list, and raises if any is missing. Every caption is written to JSONL. This is the evaluation POPE cannot provide, since POPE answers are one token. **It has not been run yet.**
+
+```bash
+python scripts/run_chair.py --method visualguard --config visualguard \
+    --ann-dir /path/to/coco/annotations --image-root /path/to/coco/val2014 \
+    --synonyms /path/to/chair/synonyms.txt --num-images 500
+```
+
+### HallusionBench
+
+`src/evaluation/hallusionbench_eval.py` and `src/data/hallusionbench.py` implement a yes/no evaluator and loader for the official `HallusionBench.json` (image-less questions are skipped). They are covered by tests but are **not exposed through `src.run`** (`--benchmark` accepts `pope` or `mme`), and no run exists.
+
 ### Ablation grid
 
 | Row | Method | Channels |
@@ -597,9 +648,19 @@ These are enforced in code, not merely intended:
 
 ---
 
+## Continuous Integration
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml`, `visualguard.yml` | push / PR | Compiles `src`, `tests`, `scripts` and runs `pytest` (no downloads) |
+| `smoke.yml`, `visualguard-smoke.yml` | push / PR | End-to-end smoke test on the 0.5B LLaVA-family checkpoint, CPU, 4 new tokens |
+| `benchmark.yml` | manual | POPE run for a chosen method / split / sample cap; defaults to the 0.5B model on a CPU runner. A 7B model needs a self-hosted GPU runner |
+
+---
+
 ## Deployment
 
-Research code, run locally. No Dockerfile, no hosted service. Datasets, checkpoints and run outputs are gitignored.
+Research code, run locally. No Dockerfile, no hosted service. Datasets and checkpoints are gitignored; result JSONs, predictions and run logs under `results/` and `output/` are committed so reported numbers stay tied to a recorded run.
 
 ---
 
@@ -610,7 +671,7 @@ Parameters live in `configs/*.yaml` and are overridden by CLI flags. Precedence:
 | Flag | Default | Description |
 |---|---|---|
 | `--model` | `llava-hf/llava-1.5-7b-hf` | LVLM checkpoint. Must be identical across methods you compare |
-| `--benchmark` | `pope` | `pope` or `mme` |
+| `--benchmark` | `pope` | `pope` or `mme` (CHAIR: `scripts/run_chair.py`) |
 | `--method` | `baseline` | See *Methods compared* |
 | `--config` | — | YAML under `configs/` (e.g. `visualguard`) |
 | `--alpha` / `--beta` / `--gamma` | `1.0` / `1.0` / `0.0` (in `visualguard.yaml`) | Attention / semantic / region weights |
@@ -645,7 +706,8 @@ no way to notice. Unset CLI flags are `None` and never overwrite a YAML value.
 | File | Contents |
 |---|---|
 | `results/<run-name>.json` | Metrics, efficiency, provenance, resolved config |
-| `results/pope_<setting>_<method>_predictions.jsonl` | Per-sample predictions for re-scoring / auditing |
+| `results/pope_<setting>_<method>_predictions.jsonl` | Per-sample predictions for re-scoring / auditing, including per-sample `interventions` |
+| `results/results_table.md` | Output of `scripts/make_results_table.py` |
 
 Exit codes from `src.run`: `0` success · `2` configuration error · `3` grounding backend unavailable · `4` model / backend load failure · `5` dataset problem.
 
@@ -671,7 +733,9 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 - **LLaVA-family only.** `LVLMBackend` defines the extension point, but no second LVLM is implemented, so pluggability is structural rather than demonstrated.
 - **Much slower than greedy decoding.** One forward pass per step plus one CLIP forward per step. See `efficiency` in any result JSON.
 - **Capability cost is unquantified.** MME cost is measured by the framework, but no experiment has been run yet.
-- **HallusionBench is not wired in.** No loader or evaluator exists, and none is claimed.
+- **No measured effect yet.** In the one n = 1000 run, the penalty changed no answer (0 interventions in 1000 single-token answers on a 0.5B model). Whether it ever fires on the 7B model, on the harder POPE splits or in long-form captions is untested.
+- **HallusionBench is only half wired in.** The loader and evaluator exist and are tested, but `src.run` cannot select them and no run exists.
+- **VCD is available only in `scripts/run_chair.py`.** POPE and MME comparisons against VCD are not possible from `src.run`.
 - **Baseline and VisualGuard do not decode under byte-identical conditions.** Baselines go through HF `model.generate`, which merges the checkpoint's `generation_config` (length penalty, suppression tokens); the VisualGuard loop applies none of those, and ignores `repetition_penalty`. Attention matrices are also requested on every VisualGuard step, so the timing comparison across the table is not apples-to-apples.
 - **Evidence scorers are stateful across a sample.** Image features, detections and LM embeddings are cached per image and reset at sample boundaries by the decoder. A caller driving `score_candidates` directly must do that itself.
 - **The decoder is not thread-safe.** Per-sample mutable state (bindings, caches, the grounding backend) assumes one sample at a time; the benchmarks are sequential.
@@ -682,13 +746,14 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 
 | Feature | Why |
 |---|---|
-| Full benchmark results | Turn the hypothesis into a result — or falsify it with real data |
+| Full benchmark results (7B, all POPE splits) with matched baselines | Turn the hypothesis into a result — or falsify it with real data |
+| Check why the penalty never fires on POPE | The pilot logged 0 interventions; inspect VES spread on single-token yes/no answers |
+| Run CHAIR for baseline, VCD and VisualGuard | Long-form captions are where per-step intervention can actually act |
 | Quantify the MME capability trade-off | Show what narrow penalties cost in general ability |
 | Second LVLM backend | Demonstrate that the `LVLMBackend` interface is truly pluggable |
-| Long-form captioning evaluation | POPE's single-token answers under-test the attention channel |
 | Region vocabulary beyond pre-generation fix | Allow detector vocabulary to expand per decoding step |
 | Absolute threshold calibration | Calibrate `threshold` across vocabulary rather than per-step candidate set |
-| HallusionBench integration | A second hallucination benchmark beyond POPE |
+| Expose HallusionBench and VCD through `src.run` | Compare all methods on every benchmark from one entry point |
 | Cheaper semantic evidence (v2) | Approximate similarity or distilled CLIP alternative |
 
 ---
