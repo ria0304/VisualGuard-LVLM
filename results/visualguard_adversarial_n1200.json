@@ -1,0 +1,118 @@
+{
+  "efficiency": {
+    "peak_gpu_memory_mb": null,
+    "total_runtime_s": 18168.91556405
+  },
+  "pope": {
+    "adversarial": {
+      "benchmark": "pope",
+      "latency_s": 18165.214533198003,
+      "method": "visualguard",
+      "metrics": {
+        "accuracy": 0.8266666666666667,
+        "f1": 0.8129496402877697,
+        "fn": 148,
+        "fp": 60,
+        "fpr": 0.1,
+        "hallucination_rate": 0.1,
+        "n": 1200,
+        "no_ratio": 0.5733333333333334,
+        "parseable": 1200,
+        "precision": 0.8828125,
+        "recall": 0.7533333333333333,
+        "specificity": 0.9,
+        "tn": 540,
+        "tp": 452,
+        "unparseable": 0,
+        "yes_ratio": 0.4266666666666667
+      },
+      "n_samples": 1200,
+      "notes": [],
+      "peak_memory_mb": null,
+      "per_token_latency_s": 7.568839388832501,
+      "setting": "adversarial"
+    }
+  },
+  "provenance": {
+    "command": "run.py --benchmark pope --method visualguard --model llava-hf/llava-interleave-qwen-0.5b-hf --device cpu --data-root /home/runner/work/_temp/POPE --image-root /home/runner/work/_temp/POPE/images --output-dir results --run-name visualguard_adversarial_n1200 --dtype float32 --setting adversarial --max-samples 1200 --config visualguard",
+    "config_file": "/home/runner/work/VisualGuard-LVLM/VisualGuard-LVLM/configs/visualguard.yaml",
+    "cpu_count": 4,
+    "device": {
+      "cuda_available": false,
+      "device_count": 0,
+      "torch_device": "cpu"
+    },
+    "git_commit": "6890b9f0ffda3bc4ec89c6c0c115064940b71280",
+    "git_dirty": true,
+    "library_versions": {
+      "PIL": "12.3.0",
+      "accelerate": "1.15.0",
+      "bitsandbytes": "not installed",
+      "numpy": "2.4.6",
+      "python": "3.11.17",
+      "torch": "2.14.1+cpu",
+      "transformers": "5.19.0",
+      "yaml": "6.0.3"
+    },
+    "max_samples": 1200,
+    "method": "visualguard",
+    "model": "llava-hf/llava-interleave-qwen-0.5b-hf",
+    "note": "max_samples was set: these numbers are NOT comparable to a full-dataset run",
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "run_name": "visualguard_adversarial_n1200",
+    "seed": 42,
+    "timestamp_utc": "2026-10-13T13:46:17.989739+00:00"
+  },
+  "resolved_config": {
+    "decoding": {
+      "length_penalty": null,
+      "max_new_tokens": 16,
+      "num_beams": 4,
+      "repetition_penalty": 1.0,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0
+    },
+    "evidence": {
+      "alpha": 1.0,
+      "attention_candidate_mix": 0.5,
+      "beta": 1.0,
+      "clip_device": null,
+      "clip_model_name": "openai/clip-vit-base-patch32",
+      "gamma": 0.0,
+      "head_aggregation": "mean",
+      "lam": 0.5,
+      "layer_aggregation": "mean",
+      "layer_fraction": 0.5,
+      "normalize": "minmax",
+      "penalise_function_words": false,
+      "threshold": 0.35
+    },
+    "grounding": {
+      "backend": "none",
+      "box_threshold": 0.3,
+      "cache": true,
+      "cache_size": 8,
+      "device": "cpu",
+      "dtype": "float32",
+      "grounding_device_alias": null,
+      "grounding_dtype": null,
+      "max_detections": 64,
+      "model_id": "IDEA-Research/grounding-dino-base",
+      "text_threshold": 0.25
+    },
+    "lvlm": {
+      "attn_implementation": "eager",
+      "cache_dir": null,
+      "device": "cpu",
+      "dtype": "float32",
+      "load_in_4bit": false,
+      "load_in_8bit": false,
+      "max_new_tokens": 64,
+      "model_name": "llava-hf/llava-interleave-qwen-0.5b-hf",
+      "revision": "main",
+      "trust_remote_code": false
+    }
+  }
+}
