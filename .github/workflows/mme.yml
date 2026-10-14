@@ -1,0 +1,99 @@
+```yaml
+name: VisualGuard MME Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_samples:
+        description: "Samples per run (5 for pilot, 0 for full run)"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visualguard-mme-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mme-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download MME dataset
+        env:
+          MME_DATA_URL: ${{ secrets.MME_DATA_URL }}
+        run: |
+          if [ -z "$MME_DATA_URL" ]; then
+            echo "::error::Configure the MME_DATA_URL repository secret."
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/MME"
+          curl -fL --retry 3 "$MME_DATA_URL" \
+            -o "$RUNNER_TEMP/mme.zip"
+          unzip -q "$RUNNER_TEMP/mme.zip" \
+            -d "$RUNNER_TEMP/MME"
+
+          echo "MME dataset extracted."
+          find "$RUNNER_TEMP/MME" -maxdepth 3 -type f \
+            | head -40
+
+      - name: Validate dataset
+        run: |
+          if ! find "$RUNNER_TEMP/MME" \
+            -type f -name '*.jsonl' | grep -q .; then
+            echo "::error::No JSONL manifests found in MME archive."
+            exit 1
+          fi
+
+      - name: Run VisualGuard MME benchmark
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MAX_SAMPLES: ${{ inputs.max_samples }}
+        run: |
+          ARGS=()
+
+          if [ "$MAX_SAMPLES" != "0" ]; then
+            ARGS+=(--max-samples "$MAX_SAMPLES")
+          fi
+
+          python -m src.run \
+            --benchmark mme \
+            --method visualguard \
+            --config visualguard \
+            --model llava-hf/llava-interleave-qwen-0.5b-hf \
+            --device cpu \
+            --dtype float32 \
+            --data-root "$RUNNER_TEMP/MME" \
+            --output-dir results/mme \
+            --run-name visualguard_mme \
+            "${ARGS[@]}"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualguard-mme-results
+          path: results/mme/
+          if-no-files-found: warn
+          retention-days: 30
+```
