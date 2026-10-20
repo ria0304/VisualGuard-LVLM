@@ -280,3 +280,35 @@ Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF
 2026-10-20 15:59:01,979 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
 2026-10-20 15:59:02,215 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
 2026-10-20 16:02:02,149 INFO    src.evaluation.mme_eval: [MME visualguard] 100/2372
+2026-10-20 16:05:00,335 INFO    src.evaluation.mme_eval: [MME visualguard] 200/2372
+2026-10-20 16:07:59,156 INFO    src.evaluation.mme_eval: [MME visualguard] 300/2372
+2026-10-20 16:11:00,145 INFO    src.evaluation.mme_eval: [MME visualguard] 400/2372
+2026-10-20 16:14:01,559 INFO    src.evaluation.mme_eval: [MME visualguard] 500/2372
+2026-10-20 16:17:00,947 INFO    src.evaluation.mme_eval: [MME visualguard] 600/2372
+2026-10-20 16:19:59,026 INFO    src.evaluation.mme_eval: [MME visualguard] 700/2372
+2026-10-20 16:22:56,675 INFO    src.evaluation.mme_eval: [MME visualguard] 800/2372
+2026-10-20 16:25:54,562 INFO    src.evaluation.mme_eval: [MME visualguard] 900/2372
+2026-10-20 16:28:52,435 INFO    src.evaluation.mme_eval: [MME visualguard] 1000/2372
+2026-10-20 16:31:50,180 INFO    src.evaluation.mme_eval: [MME visualguard] 1100/2372
+2026-10-20 16:34:47,665 INFO    src.evaluation.mme_eval: [MME visualguard] 1200/2372
+2026-10-20 16:37:53,316 INFO    src.evaluation.mme_eval: [MME visualguard] 1300/2372
+2026-10-20 16:41:19,222 INFO    src.evaluation.mme_eval: [MME visualguard] 1400/2372
+2026-10-20 16:44:47,260 INFO    src.evaluation.mme_eval: [MME visualguard] 1500/2372
+2026-10-20 16:48:14,374 INFO    src.evaluation.mme_eval: [MME visualguard] 1600/2372
+2026-10-20 16:51:26,347 INFO    src.evaluation.mme_eval: [MME visualguard] 1700/2372
+2026-10-20 16:54:25,024 INFO    src.evaluation.mme_eval: [MME visualguard] 1800/2372
+2026-10-20 16:57:24,361 INFO    src.evaluation.mme_eval: [MME visualguard] 1900/2372
+2026-10-20 17:00:21,757 INFO    src.evaluation.mme_eval: [MME visualguard] 2000/2372
+2026-10-20 17:03:20,501 INFO    src.evaluation.mme_eval: [MME visualguard] 2100/2372
+2026-10-20 17:06:25,944 INFO    src.evaluation.mme_eval: [MME visualguard] 2200/2372
+2026-10-20 17:09:26,464 INFO    src.evaluation.mme_eval: [MME visualguard] 2300/2372
+2026-10-20 17:11:33,823 INFO    src.evaluation.mme_eval: Wrote 2372 predictions to /content/VisualGuard-LVLM/results/mme_only/sensitivity_threshold_025/mme_visualguard_predictions.jsonl
+2026-10-20 17:11:33,859 INFO    visualguard: Wrote results to /content/VisualGuard-LVLM/results/mme_only/sensitivity_threshold_025/sensitivity_threshold_025.json
+
+====================================================================
+VisualGuard | benchmark=mme method=visualguard model=llava-hf/llava-1.5-7b-hf
+====================================================================
+MME total: 1776.38 (perception 1466.02, cognition 310.36)
+runtime 4424.1s | peak GPU mem 11401.7734375
+====================================================================
+
