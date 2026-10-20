@@ -5,7 +5,7 @@
 <img src="https://img.shields.io/badge/LVLM-LLaVA--1.5-blue?style=flat-square" />
 <img src="https://img.shields.io/badge/Evidence-Attention%20%C2%B7%20CLIP%20%C2%B7%20Grounding%20DINO-purple?style=flat-square" />
 <img src="https://img.shields.io/badge/Benchmarks-POPE%20%C2%B7%20MME%20%C2%B7%20CHAIR-green?style=flat-square" />
-<img src="https://img.shields.io/badge/Status-Implementation%20complete%20%C2%B7%20pilot%20results%20only-yellow?style=flat-square" />
+<img src="https://img.shields.io/badge/Status-Implementation%20complete%20%C2%B7%20no%20measured%20gain%20over%20greedy-orange?style=flat-square" />
 
 
 # VisualGuard — Dynamic Visual Evidence-Guided Decoding for Hallucination Reduction in LVLMs
@@ -19,8 +19,8 @@ VisualGuard is a training-free, decoding-time intervention for Large Vision-Lang
 
 ---
 
-> **Status: implementation complete, pilot results only.**
-> This repository implements the method and a reproducible evaluation framework. The only measured result so far is a **small-model CPU pilot** (see [Results so far](#results-so-far)): it does **not** show that VisualGuard reduces hallucination. No full-benchmark run on the 7B model has been performed. Every results table is generated from real result JSONs on disk; unmeasured cells are rendered as `not run`, never as zeros or estimates.
+> **Status: implementation complete; measured on the 7B model; no improvement over greedy decoding.**
+> The method and evaluation framework are implemented and have now been run on `llava-hf/llava-1.5-7b-hf` (4-bit, one Tesla T4, seed 42): full POPE for the baseline, full POPE *random* and *popular* for VisualGuard, and full MME (2372 questions) for both. In every comparison VisualGuard was **equal to, or slightly worse than, unmodified greedy decoding**, at about twice the runtime. See [Results so far](#results-so-far) for the numbers and [What has not been run](#what-has-not-been-run) for the gaps. Every table is generated from result files on disk or quoted from a named notebook output; unmeasured cells are rendered as `not run`, never as zeros or estimates.
 
 ---
 
@@ -62,20 +62,108 @@ Because the method is training-free, every baseline and every ablation runs agai
 
 ## Results so far
 
-One run at scale exists, produced by the `Benchmark (POPE)` GitHub Actions workflow on a CPU-only runner (`results/visualguard_random_n1000.json`, seed 42):
+Source tags: **[JSON]** = result file committed under `results/`. **[notebook]** = printed in the output of a committed notebook under `NOTEBOOK/`; the result JSONs of those Kaggle runs were **not** committed to `results/`, so the notebook output is the only record.
 
-| Setting | Model | Method | n | Accuracy | Precision | Recall | F1 | Yes-ratio | Hallucination rate |
-|---|---|---|---|---|---|---|---|---|---|
-| POPE random | `llava-interleave-qwen-0.5b-hf` | `visualguard` (α=1, β=1, γ=0, λ=0.5, τ=0.35) | 1000 | 0.872 | 0.974 | 0.764 | 0.857 | 0.392 | 0.020 |
+Setup shared by every 7B run: `llava-hf/llava-1.5-7b-hf`, 4-bit (bitsandbytes), fp16 compute, Tesla T4, seed 42, **one run per configuration** (no seed variance). "VisualGuard" means attention + semantic evidence (α = β = 1, γ = 0), τ = 0.35, top-k 50, at the λ stated in each table.
 
-**How to read this number — it is not evidence that the method works:**
+### 1. Full POPE, 7B (3000 questions per split) &nbsp;[notebook: `NOTEBOOK/V2.ipynb`, §5c]
 
-- **The penalty never fired.** In `results/pope_random_visualguard_predictions.jsonl`, `interventions` is `0` for all 1000 samples, and every answer is two tokens long. The decoded answers are therefore what unmodified greedy decoding would give. The run shows the pipeline works end to end, not that the evidence channels help.
-- **There is no matched baseline at n = 1000.** Greedy, sampling and beam were run only on 10 samples (`output/results/probe_0p5b_*.json`), where all three and VisualGuard score identically (accuracy 0.90, F1 0.889). Ten samples cannot separate anything.
-- **It is the wrong model and one split.** The 0.5B checkpoint is not the 7B experiment model. Only the `random` split (the easiest) was run; `popular`, `adversarial` and MME were not.
-- **No CHAIR, VCD, region-evidence or MME result exists yet.**
+| Split | Method | Accuracy | F1 | Precision | Recall | Hallucination rate |
+|---|---|---|---|---|---|---|
+| random | greedy baseline | 0.8703 | 0.8544 | 0.9744 | 0.7607 | 0.0200 |
+| random | VisualGuard, λ = 5 | 0.8680 | 0.8512 | 0.9750 | 0.7553 | 0.0193 |
+| popular | greedy baseline | 0.8553 | 0.8402 | 0.9383 | 0.7607 | 0.0500 |
+| popular | VisualGuard, λ = 5 | 0.8527 | 0.8368 | 0.9379 | 0.7553 | 0.0500 |
+| adversarial | greedy baseline | 0.8350 | 0.8218 | 0.8935 | 0.7607 | 0.0907 |
+| adversarial | VisualGuard, λ = 5 | **not completed** | | | | |
 
-Probe runs under `output/` (logs in `output/logs/`) are plumbing checks and are listed for provenance only. Re-score or audit any run from its predictions file. The table builder marks the n = 1000 row as not comparable to a full-dataset run (`--max-samples` was set).
+- On both completed splits VisualGuard is **0.2–0.3 accuracy points below greedy**. In terms of counts (1500 positives per split) it loses 8 true positives on each split, removes 1 false positive on *random* (30 → 29) and none on *popular* (75 → 75).
+- The VisualGuard adversarial run was interrupted by hand after 72 minutes (`KeyboardInterrupt` in the notebook), so there is no full-split adversarial result for the method. Do not read the absence as "not worse".
+- Cost: 42.5 min per split for greedy against about 90.5 min for VisualGuard (≈ 2.1×); peak GPU memory 4.3 GB against 10.6 GB.
+- λ = 5 is **ten times the shipped default** (0.5). It was chosen after the decoder audit below showed that λ ≤ 1 changes nothing. The held-out view defined in the notebook (questions after the first 300 per split) was never computed, because the adversarial run did not finish.
+
+### 2. Ablations and baselines, 7B (first 300 questions per split, 900 total) &nbsp;[notebook: `NOTEBOOK/V2.ipynb`, §5b]
+
+Paired against the greedy baseline on the same questions. `changed` = answers that differ from greedy, `fixed` = greedy wrong and method right, `broke` = the reverse, `p` = exact McNemar (two-sided binomial) on fixed vs. broke. Ablation rows use λ = 5; the default row uses λ = 0.5.
+
+| Run | Accuracy | F1 | Halluc. rate | changed | fixed | broke | p | Time vs greedy |
+|---|---|---|---|---|---|---|---|---|
+| greedy baseline | 0.8478 | 0.8331 | 0.0644 | – | – | – | – | 1.0× |
+| VisualGuard, default λ = 0.5 | 0.8478 | 0.8331 | 0.0644 | 0 | 0 | 0 | 1.000 | 2.2× |
+| VisualGuard, λ = 5 | 0.8411 | 0.8245 | 0.0644 | 6 | 0 | 6 | 0.031 | 2.2× |
+| attention only | 0.8478 | 0.8319 | 0.0578 | 6 | 3 | 3 | 1.000 | 1.3× |
+| semantic only | 0.8322 | 0.8124 | 0.0622 | 16 | 1 | 15 | 0.0005 | 2.2× |
+| attention + semantic (`unidirectional`) | 0.8411 | 0.8245 | 0.0644 | 6 | 0 | 6 | 0.031 | 2.1× |
+| region only | 0.8278 | 0.8040 | 0.0511 | 30 | 6 | 24 | 0.0014 | 2.1× |
+| attention + semantic + region (γ = 1) | 0.8478 | 0.8331 | 0.0644 | 0 | 0 | 0 | 1.000 | 3.0× |
+| beam search (4 beams) | 0.8478 | 0.8331 | 0.0644 | 0 | 0 | 0 | 1.000 | 3.2× |
+| sampling (T = 1) | 0.8067 | 0.7943 | 0.1333 | 99 | 31 | 68 | 0.0003 | 1.0× |
+
+- Wherever the penalty changes an answer, it breaks more answers than it fixes. No configuration has more `fixed` than `broke` except attention-only, which is a 3 / 3 tie.
+- Attention-only's lower hallucination rate (0.0578 vs 0.0644) comes from 3 fixed answers that are exactly offset by 3 broken ones. It is not an improvement.
+- An earlier grid on the same model at **n = 200 per split** (rows A–G plus a λ sweep of 0.25 / 0.5 / 1.0, shipped YAML settings) produced metrics **identical to the baseline in every row** (adversarial / popular / random accuracy 0.800 / 0.845 / 0.860). [notebook: `NOTEBOOK/v1.ipynb`, §7]
+
+### 3. Why almost nothing changes: decoder audit &nbsp;[notebook: `NOTEBOOK/V2.ipynb`, §3]
+
+The audit traced the first generated token (the yes/no answer) for 60 POPE questions at λ = 1 and computed, per question, the *critical λ*: the smallest λ at which another candidate overtakes the top one.
+
+- VES of the winning token: mean 0.497, std 0.054, range 0.419–0.591. All of these are **above** τ = 0.35, so the winning token receives zero penalty.
+- Logit gap between the top two candidates: mean 2.70, min 0.16, max 4.64.
+- `no` is in the function-word list and is never penalised, so the penalty can only push `Yes` *down*. When `Yes` is the winner its VES is above τ (no penalty); when `No` is the winner, penalising `Yes` cannot help the runner-up.
+- Result: 0 / 60 questions had a penalty difference that could reorder the top two, and 0 / 60 answers flip at λ = 0.5, 1, 5, 20 or 50.
+
+This is a 60-question audit of the first token only. At λ = 5 the full run did change 6 of 900 answers (all harmful), so the effect is not strictly zero; it is just rare and wrong-signed.
+
+### 4. MME, 7B (2372 questions) &nbsp;[JSON: `results/mme_*_s42.json`, `results/sensitivity_*.json`]
+
+Two of the 2374 official questions were dropped because the Hugging Face mirror's image was corrupt (`landmark`: 400 → 398). Both methods ran on the same 2372.
+
+| Run | Total | Perception | Cognition | Runtime | Peak GPU |
+|---|---|---|---|---|---|
+| greedy baseline | **1776.38** | 1466.02 | 310.36 | 41 min | 4.4 GB |
+| VisualGuard (λ = 0.5, τ = 0.35) | 1775.76 | 1465.40 | 310.36 | 83 min | 11.4 GB |
+
+- Difference: **−0.62** points out of a possible 2800. Paired on predictions (`results/mme_*_predictions.jsonl`): **20 answers changed, 7 fixed, 13 broke** (exact McNemar p ≈ 0.26). Not distinguishable from zero.
+- All 20 changes are in recognition-style subtasks: artwork 9, celebrity 5, scene 3, posters 2, landmark 1. **None** are in existence, count, position or color, the subtasks closest to object hallucination.
+- Subtasks that moved: artwork 115.00 → 113.50, landmark 157.79 → 157.54, celebrity 140.00 → 140.88, scene 158.25 → 158.50. The other ten subtasks are identical.
+
+One-parameter sensitivity around the default (each a full MME run, same model and seed):
+
+| Change | Total | Δ vs greedy |
+|---|---|---|
+| λ = 0.25 | 1776.51 | +0.13 |
+| λ = 0.75 | 1774.51 | −1.87 |
+| τ = 0.25 | 1776.38 | 0.00 (identical to greedy) |
+| τ = 0.45 | 1770.47 | −5.91 |
+
+Stronger intervention (larger λ or τ) costs more score; no setting gains more than 0.13 points. The notebook also started MME ablation runs for attention-only, semantic-only and attention + semantic; their result files were not recovered, so those rows do not exist.
+
+### 5. Earlier pilots, 0.5B CPU model &nbsp;[JSON: `results/visualguard_*.json`, `output/results/probe_0p5b_*.json`]
+
+`llava-interleave-qwen-0.5b-hf`, GitHub Actions CPU runner, VisualGuard default (λ = 0.5, τ = 0.35), seed 42, capped samples:
+
+| Setting | n | Accuracy | F1 | Hallucination rate | Interventions |
+|---|---|---|---|---|---|
+| POPE random | 1000 | 0.872 | 0.8565 | 0.020 | 0 in 1000 |
+| POPE popular | 1200 | 0.855 | 0.8386 | 0.043 | 0 in 1200 |
+| POPE adversarial | 1200 | 0.827 | 0.8129 | 0.100 | 0 in 1200 |
+
+Every answer is two tokens long and the penalty never fired, so these are what unmodified greedy decoding would give. There is no matched baseline at these sample sizes (greedy, sampling, beam and VisualGuard were compared only on 10 questions, all scoring 0.90 accuracy). They show the pipeline runs end to end, nothing more. The `output/logs/` probe logs are plumbing checks.
+
+### What the measurements support
+
+- **The hypothesis in [Research Hypothesis](#research-hypothesis) was not supported** on single-token yes/no benchmarks with this backbone. At the shipped λ the method changes nothing; at λ large enough to change answers it hurts slightly.
+- **The mechanism is the likely cause, not just the settings.** Because `No` is exempt and the winning `Yes` already clears τ, the penalty has almost no lever on a one-token answer (see §3). More tuning on POPE is unlikely to help.
+- **This says nothing yet about long-form captioning**, where the penalty acts on many content tokens per answer. That is the regime the method was designed for and it is untested.
+- All 7B runs are 4-bit on one backbone with a single seed. A difference of a few answers in either direction should not be over-read.
+
+### What has not been run
+
+- CHAIR (baseline, VCD, VisualGuard). Both notebooks tried; the attached COCO val2017 input had its images missing (100 sampled images absent in `v1`, all 5000 in `V2`), so it never ran.
+- VisualGuard on the full POPE **adversarial** split (interrupted).
+- MME ablations (attention / semantic / region) and any λ above 0.75 on MME.
+- More than one seed; fp16 (non-quantised) 7B; any second LVLM; HallusionBench; VCD on POPE or MME.
+- POPE 7B result JSONs under `results/` (numbers exist only in notebook output, see tags above).
 
 ---
 
@@ -126,17 +214,18 @@ Select next token → repeat autoregressively (KV-cached)
 | Provenance block in every result JSON, recording the token budget that actually ran | ✅ |
 | YAML configs with inheritance + CLI overrides (unknown keys raise) | ✅ |
 | 4-bit / 8-bit quantisation (CUDA) | ✅ |
-| Unit + integration tests, no downloads required (313 tests) | ✅ |
+| Unit + integration tests, no downloads required | ✅ (324 passed, 1 skipped in the last recorded run, `NOTEBOOK/v1.ipynb` §4) |
 | VCD baseline (Visual Contrastive Decoding, Leng et al. 2024) | ✅ (CHAIR script only) |
 | CHAIR evaluation for open-ended captioning (`scripts/run_chair.py`) | ✅ |
 | HallusionBench evaluator + data loader | ✅ (not yet reachable from `src.run`) |
 | Runtime profiler (`src/utils/profiler.py`) | ✅ |
 | GitHub Actions: tests, real-model smoke test, manual POPE benchmark | ✅ |
-| Pilot result: 0.5B model, POPE random, n = 1000 | ✅ (no interventions fired; see above) |
-| Full benchmark results (7B, all POPE splits, MME) | ❌ Not yet run |
-| MME capability trade-off quantification | ❌ Not yet measured |
+| Pilot results: 0.5B CPU model, POPE random / popular / adversarial, n = 1000–1200 | ✅ (0 interventions in all 3400 answers) |
+| 7B results: POPE baseline (3 splits), POPE VisualGuard (random, popular), MME baseline + VisualGuard | ✅ Run; no gain over greedy |
+| 7B VisualGuard on POPE adversarial, full split | ❌ Interrupted, not completed |
+| MME capability trade-off quantification | ✅ Measured: 1776.38 → 1775.76 (−0.62), 20 / 2372 answers changed |
 | LVLM backends other than LLaVA-family | ❌ Extension point only |
-| CHAIR results | ❌ Evaluator exists, never run |
+| CHAIR results | ❌ Evaluator exists; both notebook attempts failed on missing COCO images |
 
 ---
 
@@ -232,7 +321,7 @@ Baselines run through the standard `model.generate` path and never build an evid
 
 For a candidate continuation `t`, the degree to which the image corroborates `t` is measurable from complementary, partially independent signals (LVLM attention, image–text semantic similarity, open-vocabulary region detections). Penalising candidates whose support falls below a threshold should reduce object hallucination, and the *cost* in general capability should be governed by how narrowly the penalty is targeted.
 
-This is a hypothesis, not a finding. It has not been tested on any benchmark in this repository. The ablation grid is designed so that it **can fail**.
+The ablation grid was designed so that this hypothesis **can fail**. On POPE and MME with `llava-1.5-7b-hf` it did not hold up: the penalty either changes nothing or breaks more answers than it fixes (see [Results so far](#results-so-far)). It remains untested on long-form captioning (CHAIR), which is where per-step intervention has the most room to act.
 
 ---
 
@@ -341,9 +430,15 @@ VisualGuard-LVLM/
 │   ├── test_vcd.py
 │   └── test_profiler.py
 │
-├── .github/workflows/                # CI tests, real-model smoke tests, manual POPE benchmark
-├── output/                           # Pilot probe results, logs, POPE conversion helper
-├── results/                          # Run outputs (n = 1000 pilot, results table, predictions)
+├── NOTEBOOK/                         # Kaggle / Colab notebooks that produced the 7B results (outputs kept)
+│   ├── v1.ipynb                      # 7B ablation grid A–G + lambda sweep, n = 200 per split
+│   ├── V2.ipynb                      # Decoder audit, paired statistics, full POPE (7B)
+│   └── abletation_and mme(only).ipynb  # Full MME, baseline + VisualGuard + sensitivity runs
+│
+├── .github/workflows/                # CI tests, smoke tests, manual POPE / MME benchmarks
+│   └── run_paper_pipeline.py         # End-to-end experiment script (a script, not a workflow)
+├── output/                           # 0.5B probe results and logs, POPE conversion helper
+├── results/                          # MME 7B runs + sensitivity runs, 0.5B POPE pilots, predictions, results table
 ├── requirements.txt
 └── .gitignore
 ```
@@ -655,6 +750,21 @@ These are enforced in code, not merely intended:
 | `ci.yml`, `visualguard.yml` | push / PR | Compiles `src`, `tests`, `scripts` and runs `pytest` (no downloads) |
 | `smoke.yml`, `visualguard-smoke.yml` | push / PR | End-to-end smoke test on the 0.5B LLaVA-family checkpoint, CPU, 4 new tokens |
 | `benchmark.yml` | manual | POPE run for a chosen method / split / sample cap; defaults to the 0.5B model on a CPU runner. A 7B model needs a self-hosted GPU runner |
+| `mme.yml` | manual | MME run on the 0.5B model (`max_samples` input; 5 for a pilot, 0 for a full run) |
+
+---
+
+## Notebooks
+
+The 7B results were produced on free GPU notebooks (Tesla T4), not through the CI workflows. The notebooks keep their cell outputs, which is where several numbers in [Results so far](#results-so-far) are recorded.
+
+| Notebook | Platform | What it contains |
+|---|---|---|
+| `NOTEBOOK/v1.ipynb` | Kaggle | 7B (4-bit) ablation grid A–G and λ sweep at n = 200 per split; failed CHAIR attempt |
+| `NOTEBOOK/V2.ipynb` | Kaggle | Decoder audit, paired McNemar statistics, n = 300 ablations at λ = 5, full-split POPE baseline and VisualGuard (adversarial interrupted) |
+| `NOTEBOOK/abletation_and mme(only).ipynb` | Colab | Full MME for baseline and VisualGuard, plus λ / τ sensitivity runs |
+
+Caveats: the notebooks apply small runtime patches to the repo before running (Grounding DINO label handling for `transformers` 5.x, a `length_penalty` default for beam search, and a memory fix in V2 that the notebook describes as numerically identical). All runs report `git_dirty: true`.
 
 ---
 
@@ -707,7 +817,7 @@ no way to notice. Unset CLI flags are `None` and never overwrite a YAML value.
 |---|---|
 | `results/<run-name>.json` | Metrics, efficiency, provenance, resolved config |
 | `results/pope_<setting>_<method>_predictions.jsonl` | Per-sample predictions for re-scoring / auditing, including per-sample `interventions` |
-| `results/results_table.md` | Output of `scripts/make_results_table.py` |
+| `results/results_table.md` | Output of `scripts/make_results_table.py`. It reads `results/` only, so the 7B POPE numbers that live in notebook output do not appear in it, and it mixes 0.5B and 7B rows (it warns when it does) |
 
 Exit codes from `src.run`: `0` success · `2` configuration error · `3` grounding backend unavailable · `4` model / backend load failure · `5` dataset problem.
 
@@ -731,9 +841,11 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 **Engineering**
 
 - **LLaVA-family only.** `LVLMBackend` defines the extension point, but no second LVLM is implemented, so pluggability is structural rather than demonstrated.
-- **Much slower than greedy decoding.** One forward pass per step plus one CLIP forward per step. See `efficiency` in any result JSON.
-- **Capability cost is unquantified.** MME cost is measured by the framework, but no experiment has been run yet.
-- **No measured effect yet.** In the one n = 1000 run, the penalty changed no answer (0 interventions in 1000 single-token answers on a 0.5B model). Whether it ever fires on the 7B model, on the harder POPE splits or in long-form captions is untested.
+- **Much slower than greedy decoding.** One forward pass per step plus one CLIP forward per step. Measured on 7B / 4-bit / T4: about 2.0× (MME) to 2.2× (POPE) wall-clock, and peak GPU memory 10.6–11.4 GB against 4.3–4.4 GB. See `efficiency` in any result JSON.
+- **Capability cost is small but not free.** On full MME the 7B score moves 1776.38 → 1775.76 (−0.62; 20 of 2372 answers changed, 7 fixed, 13 broke, exact McNemar p ≈ 0.26). Stronger settings cost more: τ = 0.45 gives 1770.47. All changed answers are in recognition subtasks (artwork, celebrity, scene, posters, landmark).
+- **No measured benefit.** On 7B, at the default λ = 0.5 the penalty changed 0 of 900 POPE answers; at λ = 5 it changed 6 and all 6 were harmful (McNemar p = 0.031). On the full POPE random and popular splits λ = 5 is 0.2–0.3 accuracy points below greedy. See [Results so far](#results-so-far).
+- **On one-token answers the penalty has almost no lever.** `no` is exempt as a function word and the winning `Yes` already has VES above τ, so the penalty cannot reorder the top two candidates (0 / 60 audited questions, even at λ = 50).
+- **Single seed, single backbone, 4-bit.** Every 7B number is one run with seed 42 on `llava-1.5-7b-hf` quantised to 4-bit.
 - **HallusionBench is only half wired in.** The loader and evaluator exist and are tested, but `src.run` cannot select them and no run exists.
 - **VCD is available only in `scripts/run_chair.py`.** POPE and MME comparisons against VCD are not possible from `src.run`.
 - **Baseline and VisualGuard do not decode under byte-identical conditions.** Baselines go through HF `model.generate`, which merges the checkpoint's `generation_config` (length penalty, suppression tokens); the VisualGuard loop applies none of those, and ignores `repetition_penalty`. Attention matrices are also requested on every VisualGuard step, so the timing comparison across the table is not apples-to-apples.
@@ -746,10 +858,11 @@ Exit codes from `src.run`: `0` success · `2` configuration error · `3` groundi
 
 | Feature | Why |
 |---|---|
-| Full benchmark results (7B, all POPE splits) with matched baselines | Turn the hypothesis into a result — or falsify it with real data |
-| Check why the penalty never fires on POPE | The pilot logged 0 interventions; inspect VES spread on single-token yes/no answers |
-| Run CHAIR for baseline, VCD and VisualGuard | Long-form captions are where per-step intervention can actually act |
-| Quantify the MME capability trade-off | Show what narrow penalties cost in general ability |
+| Finish VisualGuard on the POPE adversarial split (3000) and compute paired statistics on all three splits | The runner is resumable; only that split is missing |
+| Run CHAIR for baseline, VCD and VisualGuard (with COCO images present) | The audit explains why POPE cannot show an effect; long-form captions are where the penalty can act |
+| Decide whether the penalty design can work on single-token answers | `No` is exempt and `Yes` clears τ; either change the exemption / normalisation or stop evaluating on POPE alone |
+| Commit the 7B POPE result JSONs and predictions to `results/` | Today they exist only as notebook output |
+| MME ablations and multi-seed repeats | The notebook's ablation runs were not recovered; one seed cannot bound noise |
 | Second LVLM backend | Demonstrate that the `LVLMBackend` interface is truly pluggable |
 | Region vocabulary beyond pre-generation fix | Allow detector vocabulary to expand per decoding step |
 | Absolute threshold calibration | Calibrate `threshold` across vocabulary rather than per-step candidate set |
