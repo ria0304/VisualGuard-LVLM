@@ -1,0 +1,387 @@
+2026-10-20 13:28:05,191 INFO    visualguard: Method: visualguard
+2026-10-20 13:28:05,192 INFO    visualguard: LVLM: llava-hf/llava-1.5-7b-hf
+2026-10-20 13:28:05,192 INFO    visualguard: Evidence weights: alpha=1.0 beta=1.0 gamma=0.0 lambda=0.25 threshold=0.35
+2026-10-20 13:28:05,192 INFO    visualguard: MME subtasks discovered: ['existence', 'count', 'position', 'color', 'posters', 'celebrity', 'scene', 'landmark', 'artwork', 'OCR', 'commonsense_reasoning', 'numerical_calculation', 'text_translation', 'code_reasoning']
+2026-10-20 13:28:13,905 INFO    numexpr.utils: NumExpr defaulting to 2 threads.
+2026-10-20 13:28:14,357 INFO    src.model.llava_backend: Loading LVLM llava-hf/llava-1.5-7b-hf (dtype=torch.float16, device=cuda, quant=4bit)
+2026-10-20 13:28:14,670 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/revision/main "HTTP/1.1 200 OK"
+2026-10-20 13:28:14,912 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/adapter_config.json "HTTP/1.1 404 Not Found"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-10-20 13:28:14,912 WARNING huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-10-20 13:28:15,146 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:28:15,155 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fconfig.json=&etag=%225de92935009a2c670e07576ed411be82fd58b2ee%22 "HTTP/1.1 200 OK"
+2026-10-20 13:28:15,164 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fconfig.json=&etag=%225de92935009a2c670e07576ed411be82fd58b2ee%22 "HTTP/1.1 200 OK"
+2026-10-20 13:28:18,955 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/model.safetensors "HTTP/1.1 404 Not Found"
+2026-10-20 13:28:19,186 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:28:19,196 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/model.safetensors.index.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fmodel.safetensors.index.json=&etag=%22695b1d57193f2740ecab31f39297a4fd2a2ed050%22 "HTTP/1.1 200 OK"
+2026-10-20 13:28:19,205 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/model.safetensors.index.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fmodel.safetensors.index.json=&etag=%22695b1d57193f2740ecab31f39297a4fd2a2ed050%22 "HTTP/1.1 200 OK"
+2026-10-20 13:28:19,454 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/tree/b234b804b114d9e37bb655e11cbbb5f5e971b7a9?recursive=true&expand=false "HTTP/1.1 200 OK"
+
+Fetching 3 files:   0%|          | 0/3 [00:00<?, ?it/s]2026-10-20 13:28:19,706 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/xet-read-token/b234b804b114d9e37bb655e11cbbb5f5e971b7a9 "HTTP/1.1 200 OK"
+
+Fetching 3 files:  33%|███▎      | 1/3 [02:16<04:32, 136.11s/it]
+Fetching 3 files:  67%|██████▋   | 2/3 [02:38<01:09, 69.02s/it] 
+Fetching 3 files: 100%|██████████| 3/3 [02:40<00:00, 38.37s/it]
+Fetching 3 files: 100%|██████████| 3/3 [02:40<00:00, 53.36s/it]
+
+Loading weights:   0%|          | 0/686 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/686 [00:01<13:15,  1.16s/it]
+Loading weights:   0%|          | 2/686 [00:02<12:34,  1.10s/it]
+Loading weights:   1%|          | 4/686 [00:02<06:37,  1.71it/s]
+Loading weights:   1%|          | 5/686 [00:03<05:37,  2.02it/s]
+Loading weights:   1%|          | 6/686 [00:03<05:08,  2.21it/s]
+Loading weights:   1%|          | 8/686 [00:03<03:05,  3.66it/s]
+Loading weights:   1%|▏         | 9/686 [00:03<02:41,  4.19it/s]
+Loading weights:   1%|▏         | 10/686 [00:03<02:23,  4.72it/s]
+Loading weights:   2%|▏         | 11/686 [00:03<02:09,  5.23it/s]
+Loading weights:   2%|▏         | 13/686 [00:04<02:06,  5.33it/s]
+Loading weights:   2%|▏         | 14/686 [00:04<02:35,  4.33it/s]
+Loading weights:   2%|▏         | 15/686 [00:05<02:58,  3.77it/s]
+Loading weights:   2%|▏         | 17/686 [00:05<02:01,  5.49it/s]
+Loading weights:   3%|▎         | 18/686 [00:05<01:54,  5.82it/s]
+Loading weights:   3%|▎         | 19/686 [00:05<01:48,  6.15it/s]
+Loading weights:   3%|▎         | 20/686 [00:05<01:43,  6.42it/s]
+Loading weights:   3%|▎         | 22/686 [00:05<01:51,  5.94it/s]
+Loading weights:   3%|▎         | 23/686 [00:06<02:22,  4.65it/s]
+Loading weights:   3%|▎         | 24/686 [00:06<02:47,  3.95it/s]
+Loading weights:   4%|▍         | 26/686 [00:06<01:55,  5.69it/s]
+Loading weights:   4%|▍         | 27/686 [00:06<01:49,  6.00it/s]
+Loading weights:   4%|▍         | 28/686 [00:07<01:44,  6.28it/s]
+Loading weights:   4%|▍         | 29/686 [00:07<01:40,  6.52it/s]
+Loading weights:   5%|▍         | 31/686 [00:07<01:49,  5.99it/s]
+Loading weights:   5%|▍         | 32/686 [00:08<02:19,  4.68it/s]
+Loading weights:   5%|▍         | 33/686 [00:08<02:44,  3.97it/s]
+Loading weights:   5%|▌         | 35/686 [00:08<01:53,  5.71it/s]
+Loading weights:   5%|▌         | 36/686 [00:08<01:48,  6.01it/s]
+Loading weights:   5%|▌         | 37/686 [00:08<01:43,  6.29it/s]
+Loading weights:   6%|▌         | 38/686 [00:08<01:39,  6.54it/s]
+Loading weights:   6%|▌         | 40/686 [00:09<01:47,  6.00it/s]
+Loading weights:   6%|▌         | 41/686 [00:09<02:17,  4.69it/s]
+Loading weights:   6%|▌         | 42/686 [00:10<02:42,  3.97it/s]
+Loading weights:   6%|▋         | 44/686 [00:10<01:52,  5.72it/s]
+Loading weights:   7%|▋         | 45/686 [00:10<01:46,  6.03it/s]
+Loading weights:   7%|▋         | 46/686 [00:10<01:41,  6.30it/s]
+Loading weights:   7%|▋         | 47/686 [00:10<01:37,  6.58it/s]
+Loading weights:   7%|▋         | 49/686 [00:10<01:45,  6.06it/s]
+Loading weights:   7%|▋         | 50/686 [00:11<02:15,  4.70it/s]
+Loading weights:   7%|▋         | 51/686 [00:11<02:39,  3.98it/s]
+Loading weights:   8%|▊         | 53/686 [00:11<01:50,  5.73it/s]
+Loading weights:   8%|▊         | 54/686 [00:11<01:44,  6.03it/s]
+Loading weights:   8%|▊         | 55/686 [00:12<01:39,  6.32it/s]
+Loading weights:   8%|▊         | 56/686 [00:12<01:36,  6.53it/s]
+Loading weights:   8%|▊         | 58/686 [00:12<01:44,  6.01it/s]
+Loading weights:   9%|▊         | 59/686 [00:12<02:13,  4.70it/s]
+Loading weights:   9%|▊         | 60/686 [00:13<02:37,  3.98it/s]
+Loading weights:   9%|▉         | 62/686 [00:13<01:48,  5.74it/s]
+Loading weights:   9%|▉         | 63/686 [00:13<01:43,  6.04it/s]
+Loading weights:   9%|▉         | 64/686 [00:13<01:38,  6.32it/s]
+Loading weights:   9%|▉         | 65/686 [00:13<01:34,  6.55it/s]
+Loading weights:  10%|▉         | 67/686 [00:14<01:43,  6.01it/s]
+Loading weights:  10%|▉         | 68/686 [00:14<01:38,  6.27it/s]
+Loading weights:  11%|█         | 73/686 [00:14<00:50, 12.15it/s]
+Loading weights:  11%|█         | 75/686 [00:14<00:45, 13.47it/s]
+Loading weights:  11%|█         | 77/686 [00:15<01:32,  6.56it/s]
+Loading weights:  12%|█▏        | 79/686 [00:15<01:37,  6.21it/s]
+Loading weights:  12%|█▏        | 80/686 [00:15<01:34,  6.39it/s]
+Loading weights:  12%|█▏        | 81/686 [00:15<01:31,  6.61it/s]
+Loading weights:  12%|█▏        | 82/686 [00:16<01:29,  6.76it/s]
+Loading weights:  12%|█▏        | 83/686 [00:16<01:27,  6.90it/s]
+Loading weights:  12%|█▏        | 85/686 [00:16<01:36,  6.22it/s]
+Loading weights:  13%|█▎        | 86/686 [00:16<02:03,  4.85it/s]
+Loading weights:  13%|█▎        | 87/686 [00:17<02:25,  4.12it/s]
+Loading weights:  13%|█▎        | 89/686 [00:17<01:41,  5.86it/s]
+Loading weights:  13%|█▎        | 90/686 [00:17<01:36,  6.18it/s]
+Loading weights:  13%|█▎        | 91/686 [00:17<01:32,  6.44it/s]
+Loading weights:  13%|█▎        | 92/686 [00:17<01:28,  6.69it/s]
+Loading weights:  14%|█▎        | 94/686 [00:18<01:37,  6.08it/s]
+Loading weights:  14%|█▍        | 95/686 [00:18<02:03,  4.78it/s]
+Loading weights:  14%|█▍        | 96/686 [00:18<02:26,  4.03it/s]
+Loading weights:  14%|█▍        | 98/686 [00:19<01:41,  5.78it/s]
+Loading weights:  14%|█▍        | 99/686 [00:19<01:36,  6.07it/s]
+Loading weights:  15%|█▍        | 100/686 [00:19<01:32,  6.35it/s]
+Loading weights:  15%|█▍        | 101/686 [00:19<01:28,  6.61it/s]
+Loading weights:  15%|█▌        | 103/686 [00:19<01:36,  6.05it/s]
+Loading weights:  15%|█▌        | 104/686 [00:20<02:03,  4.71it/s]
+Loading weights:  15%|█▌        | 105/686 [00:20<02:26,  3.98it/s]
+Loading weights:  16%|█▌        | 107/686 [00:20<01:41,  5.72it/s]
+Loading weights:  16%|█▌        | 108/686 [00:20<01:35,  6.03it/s]
+Loading weights:  16%|█▌        | 109/686 [00:21<01:31,  6.31it/s]
+Loading weights:  16%|█▌        | 110/686 [00:21<01:28,  6.54it/s]
+Loading weights:  16%|█▋        | 112/686 [00:21<01:35,  5.98it/s]
+Loading weights:  16%|█▋        | 113/686 [00:21<02:02,  4.69it/s]
+Loading weights:  17%|█▋        | 114/686 [00:22<02:23,  3.98it/s]
+Loading weights:  17%|█▋        | 116/686 [00:22<01:39,  5.73it/s]
+Loading weights:  17%|█▋        | 117/686 [00:22<01:34,  6.03it/s]
+Loading weights:  17%|█▋        | 118/686 [00:22<01:30,  6.31it/s]
+Loading weights:  17%|█▋        | 119/686 [00:22<01:26,  6.53it/s]
+Loading weights:  18%|█▊        | 121/686 [00:23<01:34,  5.99it/s]
+Loading weights:  18%|█▊        | 122/686 [00:23<01:59,  4.70it/s]
+Loading weights:  18%|█▊        | 123/686 [00:23<02:21,  3.98it/s]
+Loading weights:  18%|█▊        | 125/686 [00:24<01:37,  5.75it/s]
+Loading weights:  18%|█▊        | 126/686 [00:24<01:32,  6.06it/s]
+Loading weights:  19%|█▊        | 127/686 [00:24<01:28,  6.33it/s]
+Loading weights:  19%|█▊        | 128/686 [00:24<01:24,  6.57it/s]
+Loading weights:  19%|█▉        | 130/686 [00:24<01:32,  6.03it/s]
+Loading weights:  19%|█▉        | 131/686 [00:25<01:58,  4.69it/s]
+Loading weights:  19%|█▉        | 132/686 [00:25<02:19,  3.98it/s]
+Loading weights:  20%|█▉        | 134/686 [00:25<01:36,  5.74it/s]
+Loading weights:  20%|█▉        | 135/686 [00:25<01:31,  6.03it/s]
+Loading weights:  20%|█▉        | 136/686 [00:25<01:27,  6.31it/s]
+Loading weights:  20%|█▉        | 137/686 [00:26<01:24,  6.53it/s]
+Loading weights:  20%|██        | 139/686 [00:26<01:31,  5.99it/s]
+Loading weights:  20%|██        | 140/686 [00:26<01:56,  4.67it/s]
+Loading weights:  21%|██        | 141/686 [00:27<02:17,  3.97it/s]
+Loading weights:  21%|██        | 143/686 [00:27<01:35,  5.71it/s]
+Loading weights:  21%|██        | 144/686 [00:27<01:30,  6.01it/s]
+Loading weights:  21%|██        | 145/686 [00:27<01:26,  6.28it/s]
+Loading weights:  21%|██▏       | 146/686 [00:27<01:22,  6.53it/s]
+Loading weights:  22%|██▏       | 148/686 [00:28<01:29,  6.01it/s]
+Loading weights:  22%|██▏       | 149/686 [00:28<01:54,  4.69it/s]
+Loading weights:  22%|██▏       | 150/686 [00:28<02:15,  3.97it/s]
+Loading weights:  22%|██▏       | 152/686 [00:28<01:33,  5.73it/s]
+Loading weights:  22%|██▏       | 153/686 [00:29<01:28,  6.03it/s]
+Loading weights:  22%|██▏       | 154/686 [00:29<01:24,  6.32it/s]
+Loading weights:  23%|██▎       | 155/686 [00:29<01:21,  6.54it/s]
+Loading weights:  23%|██▎       | 157/686 [00:29<01:28,  5.99it/s]
+Loading weights:  23%|██▎       | 158/686 [00:30<01:52,  4.69it/s]
+Loading weights:  23%|██▎       | 159/686 [00:30<02:12,  3.97it/s]
+Loading weights:  23%|██▎       | 161/686 [00:30<01:31,  5.72it/s]
+Loading weights:  24%|██▎       | 162/686 [00:30<01:26,  6.04it/s]
+Loading weights:  24%|██▍       | 163/686 [00:30<01:22,  6.33it/s]
+Loading weights:  24%|██▍       | 164/686 [00:31<01:19,  6.58it/s]
+Loading weights:  24%|██▍       | 166/686 [00:31<01:25,  6.06it/s]
+Loading weights:  24%|██▍       | 167/686 [00:31<01:50,  4.71it/s]
+Loading weights:  24%|██▍       | 168/686 [00:32<02:10,  3.98it/s]
+Loading weights:  25%|██▍       | 170/686 [00:32<01:30,  5.73it/s]
+Loading weights:  25%|██▍       | 171/686 [00:32<01:25,  6.03it/s]
+Loading weights:  25%|██▌       | 172/686 [00:32<01:21,  6.30it/s]
+Loading weights:  25%|██▌       | 173/686 [00:32<01:18,  6.53it/s]
+Loading weights:  26%|██▌       | 175/686 [00:33<01:24,  6.02it/s]
+Loading weights:  26%|██▌       | 176/686 [00:33<01:48,  4.70it/s]
+Loading weights:  26%|██▌       | 177/686 [00:33<02:07,  3.99it/s]
+Loading weights:  26%|██▌       | 179/686 [00:33<01:28,  5.75it/s]
+Loading weights:  26%|██▌       | 180/686 [00:34<01:23,  6.08it/s]
+Loading weights:  26%|██▋       | 181/686 [00:34<01:19,  6.34it/s]
+Loading weights:  27%|██▋       | 182/686 [00:34<01:16,  6.56it/s]
+Loading weights:  27%|██▋       | 184/686 [00:34<01:23,  6.04it/s]
+Loading weights:  27%|██▋       | 185/686 [00:35<01:46,  4.71it/s]
+Loading weights:  27%|██▋       | 186/686 [00:35<02:05,  4.00it/s]
+Loading weights:  27%|██▋       | 188/686 [00:35<01:26,  5.76it/s]
+Loading weights:  28%|██▊       | 189/686 [00:35<01:22,  6.05it/s]
+Loading weights:  28%|██▊       | 190/686 [00:35<01:18,  6.34it/s]
+Loading weights:  28%|██▊       | 191/686 [00:35<01:15,  6.57it/s]
+Loading weights:  28%|██▊       | 193/686 [00:36<01:21,  6.03it/s]
+Loading weights:  28%|██▊       | 194/686 [00:36<01:44,  4.70it/s]
+Loading weights:  28%|██▊       | 195/686 [00:37<02:03,  3.98it/s]
+Loading weights:  29%|██▊       | 197/686 [00:37<01:25,  5.73it/s]
+Loading weights:  29%|██▉       | 198/686 [00:37<01:20,  6.04it/s]
+Loading weights:  29%|██▉       | 199/686 [00:37<01:17,  6.32it/s]
+Loading weights:  29%|██▉       | 200/686 [00:37<01:13,  6.61it/s]
+Loading weights:  29%|██▉       | 202/686 [00:37<01:20,  6.03it/s]
+Loading weights:  30%|██▉       | 203/686 [00:38<01:42,  4.71it/s]
+Loading weights:  30%|██▉       | 204/686 [00:38<02:01,  3.98it/s]
+Loading weights:  30%|███       | 206/686 [00:38<01:23,  5.73it/s]
+Loading weights:  30%|███       | 207/686 [00:38<01:19,  6.03it/s]
+Loading weights:  30%|███       | 208/686 [00:39<01:15,  6.31it/s]
+Loading weights:  30%|███       | 209/686 [00:39<01:12,  6.55it/s]
+Loading weights:  31%|███       | 211/686 [00:39<01:18,  6.05it/s]
+Loading weights:  31%|███       | 212/686 [00:39<01:40,  4.69it/s]
+Loading weights:  31%|███       | 213/686 [00:40<01:59,  3.97it/s]
+Loading weights:  31%|███▏      | 215/686 [00:40<01:22,  5.72it/s]
+Loading weights:  31%|███▏      | 216/686 [00:40<01:17,  6.03it/s]
+Loading weights:  32%|███▏      | 217/686 [00:40<01:14,  6.30it/s]
+Loading weights:  32%|███▏      | 218/686 [00:40<01:11,  6.53it/s]
+Loading weights:  32%|███▏      | 220/686 [00:41<01:17,  5.99it/s]
+Loading weights:  32%|███▏      | 221/686 [00:41<01:39,  4.68it/s]
+Loading weights:  32%|███▏      | 222/686 [00:41<01:56,  3.97it/s]
+Loading weights:  33%|███▎      | 224/686 [00:42<01:20,  5.72it/s]
+Loading weights:  33%|███▎      | 225/686 [00:42<01:16,  6.01it/s]
+Loading weights:  33%|███▎      | 226/686 [00:42<01:13,  6.29it/s]
+Loading weights:  33%|███▎      | 227/686 [00:42<01:10,  6.52it/s]
+Loading weights:  33%|███▎      | 229/686 [00:42<01:15,  6.03it/s]
+Loading weights:  34%|███▎      | 230/686 [00:43<01:36,  4.71it/s]
+Loading weights:  34%|███▎      | 231/686 [00:43<01:54,  3.98it/s]
+Loading weights:  34%|███▍      | 233/686 [00:43<01:18,  5.76it/s]
+Loading weights:  34%|███▍      | 234/686 [00:43<01:14,  6.06it/s]
+Loading weights:  34%|███▍      | 235/686 [00:44<01:10,  6.36it/s]
+Loading weights:  34%|███▍      | 236/686 [00:44<01:08,  6.58it/s]
+Loading weights:  35%|███▍      | 238/686 [00:44<01:14,  6.01it/s]
+Loading weights:  35%|███▍      | 239/686 [00:44<01:35,  4.69it/s]
+Loading weights:  35%|███▍      | 240/686 [00:45<01:52,  3.98it/s]
+Loading weights:  35%|███▌      | 242/686 [00:45<01:17,  5.73it/s]
+Loading weights:  35%|███▌      | 243/686 [00:45<01:13,  6.06it/s]
+Loading weights:  36%|███▌      | 244/686 [00:45<01:09,  6.32it/s]
+Loading weights:  36%|███▌      | 245/686 [00:45<01:07,  6.57it/s]
+Loading weights:  36%|███▌      | 247/686 [00:46<01:12,  6.02it/s]
+Loading weights:  36%|███▌      | 248/686 [00:46<01:33,  4.68it/s]
+Loading weights:  36%|███▋      | 249/686 [00:46<01:49,  3.97it/s]
+Loading weights:  37%|███▋      | 251/686 [00:47<01:15,  5.72it/s]
+Loading weights:  37%|███▋      | 252/686 [00:47<01:12,  6.02it/s]
+Loading weights:  37%|███▋      | 253/686 [00:47<01:08,  6.30it/s]
+Loading weights:  37%|███▋      | 254/686 [00:47<01:06,  6.54it/s]
+Loading weights:  37%|███▋      | 256/686 [00:47<01:11,  6.01it/s]
+Loading weights:  37%|███▋      | 257/686 [00:48<01:31,  4.69it/s]
+Loading weights:  38%|███▊      | 258/686 [00:48<01:47,  3.96it/s]
+Loading weights:  38%|███▊      | 260/686 [00:48<01:14,  5.75it/s]
+Loading weights:  38%|███▊      | 261/686 [00:48<01:10,  6.04it/s]
+Loading weights:  38%|███▊      | 262/686 [00:48<01:07,  6.32it/s]
+Loading weights:  38%|███▊      | 263/686 [00:49<01:04,  6.54it/s]
+Loading weights:  39%|███▊      | 265/686 [00:49<01:10,  6.01it/s]
+Loading weights:  39%|███▉      | 266/686 [00:49<01:29,  4.71it/s]
+Loading weights:  39%|███▉      | 267/686 [00:50<01:44,  3.99it/s]
+Loading weights:  39%|███▉      | 269/686 [00:50<01:12,  5.74it/s]
+Loading weights:  39%|███▉      | 270/686 [00:50<01:08,  6.05it/s]
+Loading weights:  40%|███▉      | 271/686 [00:50<01:05,  6.33it/s]
+Loading weights:  40%|███▉      | 272/686 [00:50<01:02,  6.58it/s]
+Loading weights:  40%|███▉      | 274/686 [00:51<01:08,  6.04it/s]
+Loading weights:  40%|████      | 275/686 [00:51<01:27,  4.71it/s]
+Loading weights:  40%|████      | 276/686 [00:51<01:43,  3.97it/s]
+Loading weights:  41%|████      | 278/686 [00:51<01:11,  5.73it/s]
+Loading weights:  41%|████      | 279/686 [00:52<01:07,  6.04it/s]
+Loading weights:  41%|████      | 280/686 [00:52<01:04,  6.31it/s]
+Loading weights:  41%|████      | 281/686 [00:52<01:02,  6.53it/s]
+Loading weights:  41%|████▏     | 283/686 [00:52<01:06,  6.02it/s]
+Loading weights:  41%|████▏     | 284/686 [00:53<01:25,  4.69it/s]
+Loading weights:  42%|████▏     | 285/686 [00:53<01:40,  3.99it/s]
+Loading weights:  42%|████▏     | 287/686 [00:53<01:09,  5.74it/s]
+Loading weights:  42%|████▏     | 288/686 [00:53<01:05,  6.03it/s]
+Loading weights:  42%|████▏     | 289/686 [00:53<01:02,  6.34it/s]
+Loading weights:  42%|████▏     | 290/686 [00:54<01:00,  6.58it/s]
+Loading weights:  43%|████▎     | 295/686 [00:54<00:29, 13.33it/s]
+Loading weights:  45%|████▌     | 312/686 [00:54<00:08, 44.07it/s]
+Loading weights:  48%|████▊     | 330/686 [00:54<00:04, 73.28it/s]
+Loading weights:  50%|█████     | 346/686 [00:54<00:03, 93.34it/s]
+Loading weights:  53%|█████▎    | 362/686 [00:54<00:02, 109.07it/s]
+Loading weights:  56%|█████▌    | 381/686 [00:54<00:02, 130.24it/s]
+Loading weights:  58%|█████▊    | 396/686 [00:54<00:02, 135.00it/s]
+Loading weights:  61%|██████    | 416/686 [00:54<00:01, 140.56it/s]
+Loading weights:  63%|██████▎   | 432/686 [00:55<00:01, 145.68it/s]
+Loading weights:  65%|██████▌   | 448/686 [00:55<00:01, 149.47it/s]
+Loading weights:  68%|██████▊   | 466/686 [00:55<00:01, 145.45it/s]
+Loading weights:  70%|███████   | 482/686 [00:55<00:01, 149.07it/s]
+Loading weights:  73%|███████▎  | 498/686 [00:55<00:01, 151.39it/s]
+Loading weights:  75%|███████▌  | 516/686 [00:55<00:01, 156.24it/s]
+Loading weights:  78%|███████▊  | 532/686 [00:55<00:00, 157.24it/s]
+Loading weights:  80%|████████  | 549/686 [00:55<00:00, 160.89it/s]
+Loading weights:  83%|████████▎ | 566/686 [00:55<00:00, 159.93it/s]
+Loading weights:  85%|████████▍ | 583/686 [00:55<00:00, 162.83it/s]
+Loading weights:  87%|████████▋ | 600/686 [00:56<00:00, 160.82it/s]
+Loading weights:  90%|█████████ | 618/686 [00:56<00:00, 163.05it/s]
+Loading weights:  93%|█████████▎| 640/686 [00:56<00:00, 163.85it/s]
+Loading weights:  96%|█████████▌| 658/686 [00:56<00:00, 154.75it/s]
+Loading weights:  99%|█████████▊| 676/686 [00:56<00:00, 157.97it/s]
+Loading weights: 100%|██████████| 686/686 [00:56<00:00, 12.12it/s] 
+2026-10-20 13:31:57,408 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:57,417 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/generation_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fgeneration_config.json=&etag=%228d7eb9299fc02285ea047807e43b0688944ff6d0%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:57,426 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/generation_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fgeneration_config.json=&etag=%228d7eb9299fc02285ea047807e43b0688944ff6d0%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:57,665 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/revision/main "HTTP/1.1 200 OK"
+2026-10-20 13:31:57,901 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/processor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:57,910 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/processor_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fprocessor_config.json=&etag=%22af0ccfc7718788d1bdd1b747d6298d91ed48ffa4%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:57,917 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/processor_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fprocessor_config.json=&etag=%22af0ccfc7718788d1bdd1b747d6298d91ed48ffa4%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:58,152 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-10-20 13:31:58,395 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:58,403 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fchat_template.json=&etag=%22c998e15e4dfb9f8559cad83653555ccd696cd7ec%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:58,412 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fchat_template.json=&etag=%22c998e15e4dfb9f8559cad83653555ccd696cd7ec%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:58,640 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.jinja "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:58,647 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.jinja?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fchat_template.jinja=&etag=%22b432799326738da5fedb3458dfd18ccf373554de%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:58,654 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/chat_template.jinja?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fchat_template.jinja=&etag=%22b432799326738da5fedb3458dfd18ccf373554de%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:58,893 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:31:59,124 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-10-20 13:31:59,358 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:59,365 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/preprocessor_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fpreprocessor_config.json=&etag=%2238f4d736a2e2b34af9eaef607847407c0efc7980%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:59,372 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/preprocessor_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fpreprocessor_config.json=&etag=%2238f4d736a2e2b34af9eaef607847407c0efc7980%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:59,610 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:31:59,618 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Ftokenizer_config.json=&etag=%2204d334b028b1c479e0a1152eb71348ae509bb2d5%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:59,625 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer_config.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Ftokenizer_config.json=&etag=%2204d334b028b1c479e0a1152eb71348ae509bb2d5%22 "HTTP/1.1 200 OK"
+2026-10-20 13:31:59,865 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:00,099 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/llava-hf/llava-1.5-7b-hf/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-10-20 13:32:00,324 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:00,333 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Ftokenizer.json=&etag=%22ed9b377d211618c8274de275f3d9d64257406615%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:00,341 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/tokenizer.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Ftokenizer.json=&etag=%22ed9b377d211618c8274de275f3d9d64257406615%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:01,893 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/added_tokens.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:01,901 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/added_tokens.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fadded_tokens.json=&etag=%224bd5222947172917d6a7770e47e797f3253c669a%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:01,908 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/added_tokens.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fadded_tokens.json=&etag=%224bd5222947172917d6a7770e47e797f3253c669a%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:02,141 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/llava-hf/llava-1.5-7b-hf/resolve/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/special_tokens_map.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:02,149 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/special_tokens_map.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fspecial_tokens_map.json=&etag=%22a782b2f1cdab4d0bacb2dc0f85d02c4b1e31f0bd%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:02,155 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/llava-hf/llava-1.5-7b-hf/b234b804b114d9e37bb655e11cbbb5f5e971b7a9/special_tokens_map.json?%2Fllava-hf%2Fllava-1.5-7b-hf%2Fresolve%2Fb234b804b114d9e37bb655e11cbbb5f5e971b7a9%2Fspecial_tokens_map.json=&etag=%22a782b2f1cdab4d0bacb2dc0f85d02c4b1e31f0bd%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:02,690 INFO    src.evaluation.mme_eval: MME visualguard: 2372 samples
+2026-10-20 13:32:06,414 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/revision/main "HTTP/1.1 200 OK"
+2026-10-20 13:32:06,649 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/adapter_config.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:06,883 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:06,890 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fconfig.json=&etag=%22a2a88b96561196777ca173b15309ea859f4d2ce0%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:06,898 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fconfig.json=&etag=%22a2a88b96561196777ca173b15309ea859f4d2ce0%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:07,136 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/model.safetensors "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:07,375 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:07,609 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/pytorch_model.bin "HTTP/1.1 302 Found"
+2026-10-20 13:32:07,836 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/xet-read-token/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268 "HTTP/1.1 200 OK"
+2026-10-20 13:32:14,294 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]2026-10-20 13:32:14,529 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32 "HTTP/1.1 200 OK"
+
+Loading weights: 100%|██████████| 398/398 [00:00<00:00, 21428.08it/s]
+2026-10-20 13:32:14,779 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/commits/main "HTTP/1.1 200 OK"
+2026-10-20 13:32:15,057 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/revision/main "HTTP/1.1 200 OK"
+2026-10-20 13:32:15,064 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/discussions?p=0 "HTTP/1.1 200 OK"
+2026-10-20 13:32:15,289 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:15,319 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/commits/refs%2Fpr%2F66 "HTTP/1.1 200 OK"
+2026-10-20 13:32:15,528 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/processor_config.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:15,549 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/refs%2Fpr%2F66/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:15,763 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/chat_template.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:15,783 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/refs%2Fpr%2F66/model.safetensors "HTTP/1.1 302 Found"
+2026-10-20 13:32:16,004 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:16,032 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/xet-read-token/c237dc49a33fc61debc9276459120b7eac67e7ef "HTTP/1.1 200 OK"
+2026-10-20 13:32:16,238 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/audio_tokenizer_config.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:16,472 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/preprocessor_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:16,479 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/preprocessor_config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fpreprocessor_config.json=&etag=%225a12a1eb250987a4eee0e3e7d7338c4b22724be1%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:16,486 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/preprocessor_config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fpreprocessor_config.json=&etag=%225a12a1eb250987a4eee0e3e7d7338c4b22724be1%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:16,727 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:16,734 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer_config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Ftokenizer_config.json=&etag=%224fdaf6842dd5a725b940c92b6b692490ce59d548%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:16,742 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer_config.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Ftokenizer_config.json=&etag=%224fdaf6842dd5a725b940c92b6b692490ce59d548%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:16,980 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:17,215 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/models/openai/clip-vit-base-patch32/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-10-20 13:32:17,452 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/vocab.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:17,461 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/vocab.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fvocab.json=&etag=%22182766ce89b439768edadda342519f33802f5364%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:17,472 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/vocab.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fvocab.json=&etag=%22182766ce89b439768edadda342519f33802f5364%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:17,726 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/merges.txt "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:17,737 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/merges.txt?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fmerges.txt=&etag=%22bbfec752c9a675946c6dce106def6f35c882dcc2%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:17,749 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/merges.txt?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fmerges.txt=&etag=%22bbfec752c9a675946c6dce106def6f35c882dcc2%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:18,002 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:18,019 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Ftokenizer.json=&etag=%22564c0ebd5ce29c4ee4864004aee693deadd3128c%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:18,031 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/tokenizer.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Ftokenizer.json=&etag=%22564c0ebd5ce29c4ee4864004aee693deadd3128c%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:18,320 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/added_tokens.json "HTTP/1.1 404 Not Found"
+2026-10-20 13:32:18,553 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/openai/clip-vit-base-patch32/resolve/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/special_tokens_map.json "HTTP/1.1 307 Temporary Redirect"
+2026-10-20 13:32:18,564 INFO    httpx2: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/special_tokens_map.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fspecial_tokens_map.json=&etag=%229bfb42aa97dcd61e89f279ccaee988bccb4fabae%22 "HTTP/1.1 200 OK"
+2026-10-20 13:32:18,579 INFO    httpx2: HTTP Request: GET https://huggingface.co/api/resolve-cache/models/openai/clip-vit-base-patch32/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268/special_tokens_map.json?%2Fopenai%2Fclip-vit-base-patch32%2Fresolve%2F3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268%2Fspecial_tokens_map.json=&etag=%229bfb42aa97dcd61e89f279ccaee988bccb4fabae%22 "HTTP/1.1 200 OK"
+2026-10-20 13:35:25,627 INFO    src.evaluation.mme_eval: [MME visualguard] 100/2372
+2026-10-20 13:38:20,856 INFO    src.evaluation.mme_eval: [MME visualguard] 200/2372
+2026-10-20 13:41:19,122 INFO    src.evaluation.mme_eval: [MME visualguard] 300/2372
+2026-10-20 13:44:17,995 INFO    src.evaluation.mme_eval: [MME visualguard] 400/2372
+2026-10-20 13:47:17,363 INFO    src.evaluation.mme_eval: [MME visualguard] 500/2372
+2026-10-20 13:50:14,898 INFO    src.evaluation.mme_eval: [MME visualguard] 600/2372
+2026-10-20 13:53:13,411 INFO    src.evaluation.mme_eval: [MME visualguard] 700/2372
+2026-10-20 13:56:10,210 INFO    src.evaluation.mme_eval: [MME visualguard] 800/2372
+2026-10-20 13:59:05,698 INFO    src.evaluation.mme_eval: [MME visualguard] 900/2372
+2026-10-20 14:02:01,074 INFO    src.evaluation.mme_eval: [MME visualguard] 1000/2372
+2026-10-20 14:04:56,644 INFO    src.evaluation.mme_eval: [MME visualguard] 1100/2372
+2026-10-20 14:07:51,854 INFO    src.evaluation.mme_eval: [MME visualguard] 1200/2372
+2026-10-20 14:10:54,387 INFO    src.evaluation.mme_eval: [MME visualguard] 1300/2372
+2026-10-20 14:14:16,052 INFO    src.evaluation.mme_eval: [MME visualguard] 1400/2372
+2026-10-20 14:17:39,757 INFO    src.evaluation.mme_eval: [MME visualguard] 1500/2372
+2026-10-20 14:21:03,768 INFO    src.evaluation.mme_eval: [MME visualguard] 1600/2372
+2026-10-20 14:24:13,173 INFO    src.evaluation.mme_eval: [MME visualguard] 1700/2372
+2026-10-20 14:27:09,134 INFO    src.evaluation.mme_eval: [MME visualguard] 1800/2372
+2026-10-20 14:30:05,636 INFO    src.evaluation.mme_eval: [MME visualguard] 1900/2372
+2026-10-20 14:33:01,675 INFO    src.evaluation.mme_eval: [MME visualguard] 2000/2372
+2026-10-20 14:35:58,400 INFO    src.evaluation.mme_eval: [MME visualguard] 2100/2372
+2026-10-20 14:39:02,276 INFO    src.evaluation.mme_eval: [MME visualguard] 2200/2372
+2026-10-20 14:42:02,961 INFO    src.evaluation.mme_eval: [MME visualguard] 2300/2372
+2026-10-20 14:44:09,291 INFO    src.evaluation.mme_eval: Wrote 2372 predictions to /content/VisualGuard-LVLM/results/mme_only/sensitivity_lambda_025/mme_visualguard_predictions.jsonl
+2026-10-20 14:44:09,394 INFO    visualguard: Wrote results to /content/VisualGuard-LVLM/results/mme_only/sensitivity_lambda_025/sensitivity_lambda_025.json
+
+====================================================================
+VisualGuard | benchmark=mme method=visualguard model=llava-hf/llava-1.5-7b-hf
+====================================================================
+MME total: 1776.51 (perception 1466.15, cognition 310.36)
+runtime 4564.1s | peak GPU mem 11401.7734375
+====================================================================
+
